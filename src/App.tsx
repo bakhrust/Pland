@@ -1479,7 +1479,6 @@ export default function App() {
         isLoggingIn={isLoggingIn}
         authError={authError}
         onLogin={() => void handleGoogleLogin()}
-        onGuestLogin={() => setIsGuestMode(true)}
       />
     );
   }

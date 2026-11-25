@@ -9,7 +9,9 @@ service cloud.firestore {
 
     // ---------- Global Security Primitives ----------
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'bakhrust@gmail.com';
     }
 
     function isOwner(userId) {
@@ -57,6 +59,7 @@ service cloud.firestore {
           'visibleCalendarIds',
           'targetCalendarId',
           'theme',
+          'notesSeeded',
           'createdAt',
           'updatedAt'
         ])
@@ -69,6 +72,7 @@ service cloud.firestore {
         && (data.visibleCalendarIds.size() == 0 || (data.visibleCalendarIds[0] is string && data.visibleCalendarIds[0].size() <= 254))
         && data.targetCalendarId is string && data.targetCalendarId.size() >= 1 && data.targetCalendarId.size() <= 254
         && data.theme is string && data.theme in ['light', 'dark']
+        && (!('notesSeeded' in data) || data.notesSeeded is bool)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -232,6 +236,104 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidNoteBlock(block) {
+      return block is map
+        && block.keys().hasAll(['id', 'type', 'content', 'checked', 'indent'])
+        && block.keys().hasOnly(['id', 'type', 'content', 'checked', 'indent'])
+        && isValidId(block.id)
+        && block.type is string
+        && block.type in [
+          'paragraph',
+          'heading1',
+          'heading2',
+          'heading3',
+          'bullet',
+          'numbered',
+          'todo',
+          'quote',
+          'callout',
+          'code',
+          'divider'
+        ]
+        && block.content is string && block.content.size() <= 4000
+        && block.checked is bool
+        && block.indent is int && block.indent >= 0 && block.indent <= 3;
+    }
+
+    function isValidNoteFolderDoc(data, userId, folderId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'parentId',
+          'title',
+          'color',
+          'order',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'parentId',
+          'title',
+          'color',
+          'order',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == folderId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && (data.parentId == null || (isValidId(data.parentId) && data.parentId != folderId))
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
+        && isValidColor(data.color)
+        && data.order is number && data.order >= 0 && data.order <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNoteDoc(data, userId, noteId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'folderId',
+          'title',
+          'icon',
+          'pinned',
+          'order',
+          'blocks',
+          'updatedAtMs',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'folderId',
+          'title',
+          'icon',
+          'pinned',
+          'order',
+          'blocks',
+          'updatedAtMs',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == noteId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && (data.folderId == null || isValidId(data.folderId))
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.icon is string && data.icon.size() <= 16
+        && data.pinned is bool
+        && data.order is number && data.order >= 0 && data.order <= 10000
+        && data.updatedAtMs is number && data.updatedAtMs >= 0
+        && data.blocks is list && data.blocks.size() <= 200
+        && (data.blocks.size() == 0 || isValidNoteBlock(data.blocks[0]))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // ---------- Collection Rules ----------
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
@@ -252,6 +354,7 @@ service cloud.firestore {
         && (
           incoming().diff(existing()).affectedKeys().hasOnly(['activeBoardId', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['notesSeeded', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['visibleCalendarIds', 'targetCalendarId', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'activeBoardId', 'visibleCalendarIds', 'targetCalendarId', 'theme', 'updatedAt'])
         );
@@ -373,6 +476,70 @@ service cloud.firestore {
           );
 
         allow delete: if isValidId(userId) && isValidId(habitId) && isOwner(userId);
+      }
+
+      match /noteFolders/{folderId} {
+        allow get: if isValidId(userId) && isValidId(folderId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(folderId)
+          && isOwner(userId)
+          && isValidNoteFolderDoc(incoming(), userId, folderId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(folderId)
+          && isOwner(userId)
+          && isValidNoteFolderDoc(incoming(), userId, folderId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['parentId', 'title', 'color', 'order', 'updatedAt'])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(folderId) && isOwner(userId);
+      }
+
+      match /notes/{noteId} {
+        allow get: if isValidId(userId) && isValidId(noteId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(noteId)
+          && isOwner(userId)
+          && isValidNoteDoc(incoming(), userId, noteId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(noteId)
+          && isOwner(userId)
+          && isValidNoteDoc(incoming(), userId, noteId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['pinned', 'updatedAtMs', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['folderId', 'order', 'updatedAtMs', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'folderId',
+              'title',
+              'icon',
+              'pinned',
+              'order',
+              'blocks',
+              'updatedAtMs',
+              'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(noteId) && isOwner(userId);
       }
     }
   }

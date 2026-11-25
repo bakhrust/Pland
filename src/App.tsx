@@ -2,6 +2,7 @@ import type { User } from 'firebase/auth';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AuthGateScreen } from './components/AuthGateScreen';
 import { KanbanBoard } from './components/KanbanBoard';
+import { OfflineIndicator } from './components/PWAInstallButton';
 import { TopBar, MobileBottomNav } from './components/TopBar';
 import { WorkspaceToolbar } from './components/WorkspaceToolbar';
 
@@ -23,6 +24,9 @@ const HabitsView = lazy(() =>
 const MonthPlannerView = lazy(() =>
   import('./components/MonthPlannerView').then((m) => ({ default: m.MonthPlannerView }))
 );
+const NotesView = lazy(() =>
+  import('./components/NotesView').then((m) => ({ default: m.NotesView }))
+);
 const PlannerBacklogSidebar = lazy(() =>
   import('./components/PlannerBacklogSidebar').then((m) => ({ default: m.PlannerBacklogSidebar }))
 );
@@ -32,10 +36,18 @@ const QuickSearchModal = lazy(() =>
 const TimelinePlannerView = lazy(() =>
   import('./components/TimelinePlannerView').then((m) => ({ default: m.TimelinePlannerView }))
 );
+const UpcomingModuleView = lazy(() =>
+  import('./components/UpcomingModuleView').then((m) => ({ default: m.UpcomingModuleView }))
+);
 const WeekPlannerView = lazy(() =>
   import('./components/WeekPlannerView').then((m) => ({ default: m.WeekPlannerView }))
 );
-import { createInitialHabits, createInitialWorkspaceData } from './data/seedData';
+import {
+  createInitialHabits,
+  createInitialNoteFolders,
+  createInitialNotes,
+  createInitialWorkspaceData,
+} from './data/seedData';
 import {
   clearCachedToken,
   getAccessToken,
@@ -67,7 +79,11 @@ import type {
   GoogleCalendarMeta,
   HabitItem,
   LabelColor,
+  MainSection,
+  NoteFolder,
+  NotePage,
   PendingGoogleMutation,
+  PlanSubView,
   TimelineGroupBy,
   ViewMode,
   WorkspaceData,
@@ -99,9 +115,21 @@ import {
   createHabitItem,
   toggleOrIncrementHabitDay,
 } from './utils/habitLogic';
+import {
+  createNoteFolder,
+  createNotePage,
+  removeFolderAndPromoteChildren,
+} from './utils/notesLogic';
 
 const DEV_PREVIEW_STORAGE_KEY = 'pland_dev_preview_v1';
 const DEV_PREVIEW_HABITS_KEY = 'pland_dev_preview_habits_v1';
+const DEV_PREVIEW_NOTE_FOLDERS_KEY = 'pland_dev_preview_note_folders_v1';
+const DEV_PREVIEW_NOTES_KEY = 'pland_dev_preview_notes_v1';
+const OWNER_EMAIL = 'bakhrust@gmail.com';
+
+function isAuthorizedOwner(user: User | null): user is User {
+  return Boolean(user && user.emailVerified && user.email?.toLowerCase() === OWNER_EMAIL);
+}
 
 function loadDevPreviewWorkspace(): WorkspaceData {
   try {
@@ -137,6 +165,36 @@ function loadDevPreviewHabits(): HabitItem[] {
     // ignore corrupted storage
   }
   return createInitialHabits(new Date());
+}
+
+function loadDevPreviewNoteFolders(): NoteFolder[] {
+  try {
+    const raw = localStorage.getItem(DEV_PREVIEW_NOTE_FOLDERS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed as NoteFolder[];
+      }
+    }
+  } catch {
+    // ignore corrupted storage
+  }
+  return createInitialNoteFolders();
+}
+
+function loadDevPreviewNotes(): NotePage[] {
+  try {
+    const raw = localStorage.getItem(DEV_PREVIEW_NOTES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed as NotePage[];
+      }
+    }
+  } catch {
+    // ignore corrupted storage
+  }
+  return createInitialNotes(Date.now());
 }
 
 export default function App() {
@@ -204,6 +262,12 @@ export default function App() {
   const [habits, setHabits] = useState<HabitItem[]>(() =>
     isOfflineOrGuest ? loadDevPreviewHabits() : createInitialHabits(new Date())
   );
+  const [noteFolders, setNoteFolders] = useState<NoteFolder[]>(() =>
+    isOfflineOrGuest ? loadDevPreviewNoteFolders() : createInitialNoteFolders()
+  );
+  const [notes, setNotes] = useState<NotePage[]>(() =>
+    isOfflineOrGuest ? loadDevPreviewNotes() : createInitialNotes(Date.now())
+  );
   const activeBoard = useMemo(
     () => workspace.boards.find((b) => b.id === workspace.activeBoardId) ?? workspace.boards[0],
     [workspace]
@@ -222,6 +286,7 @@ export default function App() {
   }, []);
 
   const [viewMode, setViewMode] = useState<ViewMode>('board');
+  const [lastPlanView, setLastPlanView] = useState<PlanSubView>('board');
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
   const [timelineGroupBy, setTimelineGroupBy] = useState<TimelineGroupBy>('list');
   const [timelineDaysCount, setTimelineDaysCount] = useState<7 | 14>(7);
@@ -242,9 +307,29 @@ export default function App() {
 
   const handleChangeViewMode = (nextView: ViewMode) => {
     setViewMode(nextView);
+    if (
+      nextView === 'board' ||
+      nextView === 'week' ||
+      nextView === 'month' ||
+      nextView === 'timeline'
+    ) {
+      setLastPlanView(nextView);
+    }
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       setShowBacklogSidebar(false);
     }
+  };
+
+  const handleSelectSection = (section: MainSection) => {
+    if (section === 'plan') {
+      handleChangeViewMode(lastPlanView);
+    } else {
+      handleChangeViewMode(section);
+    }
+  };
+
+  const handleChangePlanView = (planView: PlanSubView) => {
+    handleChangeViewMode(planView);
   };
   const [filters, setFilters] = useState<FilterState>({
     search: '',
@@ -280,6 +365,8 @@ export default function App() {
   const loadedUidRef = useRef<string | null>(null);
   const lastSyncedWorkspaceRef = useRef<WorkspaceData | null>(null);
   const lastSyncedHabitsRef = useRef<HabitItem[] | null>(null);
+  const lastSyncedNoteFoldersRef = useRef<NoteFolder[] | null>(null);
+  const lastSyncedNotesRef = useRef<NotePage[] | null>(null);
   const lastSyncedPrefsRef = useRef<string>('');
 
   const [calendars, setCalendars] = useState<GoogleCalendarMeta[]>([]);
@@ -360,6 +447,54 @@ export default function App() {
     }
   }, [habits, googleUser, isOfflineOrGuest]);
 
+  // Sync notebook folders to Firestore or local preview storage
+  useEffect(() => {
+    if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedNoteFoldersRef.current) {
+      const prev = lastSyncedNoteFoldersRef.current;
+      if (prev === noteFolders) return;
+      lastSyncedNoteFoldersRef.current = noteFolders;
+      void loadFirestoreWorkspaceModule()
+        .then((m) => m.syncNoteFoldersChangesToFirestore(googleUser.uid, prev, noteFolders))
+        .catch((err) => {
+          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
+        });
+      return;
+    }
+
+    if (isOfflineOrGuest && !googleUser) {
+      try {
+        localStorage.setItem(DEV_PREVIEW_NOTE_FOLDERS_KEY, JSON.stringify(noteFolders));
+      } catch {
+        // ignore storage quota errors
+      }
+    }
+  }, [noteFolders, googleUser, isOfflineOrGuest]);
+
+  // Debounced sync for Notion-style notes (avoids writing to Firestore on every keystroke)
+  useEffect(() => {
+    if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedNotesRef.current) {
+      const timer = setTimeout(() => {
+        const prev = lastSyncedNotesRef.current;
+        if (!prev || prev === notes) return;
+        lastSyncedNotesRef.current = notes;
+        void loadFirestoreWorkspaceModule()
+          .then((m) => m.syncNotesChangesToFirestore(googleUser.uid, prev, notes))
+          .catch((err) => {
+            setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
+          });
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+
+    if (isOfflineOrGuest && !googleUser) {
+      try {
+        localStorage.setItem(DEV_PREVIEW_NOTES_KEY, JSON.stringify(notes));
+      } catch {
+        // ignore storage quota errors
+      }
+    }
+  }, [notes, googleUser, isOfflineOrGuest]);
+
   // Apply dark class to document.documentElement
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -409,6 +544,8 @@ export default function App() {
       loadedUidRef.current = user.uid;
       lastSyncedWorkspaceRef.current = loaded.workspace;
       lastSyncedHabitsRef.current = loaded.habits;
+      lastSyncedNoteFoldersRef.current = loaded.noteFolders;
+      lastSyncedNotesRef.current = loaded.notes;
       lastSyncedPrefsRef.current = JSON.stringify({
         visibleCalendarIds: loaded.visibleCalendarIds,
         targetCalendarId: loaded.targetCalendarId,
@@ -416,6 +553,8 @@ export default function App() {
       });
       setWorkspace(loaded.workspace);
       setHabits(loaded.habits);
+      setNoteFolders(loaded.noteFolders);
+      setNotes(loaded.notes);
       setVisibleCalendarIds(loaded.visibleCalendarIds);
       setTargetCalendarId(loaded.targetCalendarId);
       setTheme(loaded.theme);
@@ -432,6 +571,14 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = initAuth(
       (user, token) => {
+        if (!isAuthorizedOwner(user)) {
+          void logout();
+          setGoogleUser(null);
+          setNeedsAuth(true);
+          setAuthError('Доступ разрешён только владельцу приложения.');
+          setIsAuthChecked(true);
+          return;
+        }
         setGoogleUser(user);
         setNeedsAuth(!token);
         setIsAuthChecked(true);
@@ -442,6 +589,8 @@ export default function App() {
         loadedUidRef.current = null;
         lastSyncedWorkspaceRef.current = null;
         lastSyncedHabitsRef.current = null;
+        lastSyncedNoteFoldersRef.current = null;
+        lastSyncedNotesRef.current = null;
         lastSyncedPrefsRef.current = '';
         setGoogleUser(null);
         setNeedsAuth(true);
@@ -449,6 +598,8 @@ export default function App() {
         setGoogleEvents([]);
         if (wasSignedIn || !isAutostart) {
           setHabits(createInitialHabits(new Date()));
+          setNoteFolders(createInitialNoteFolders());
+          setNotes(createInitialNotes(Date.now()));
         }
         setIsAuthChecked(true);
       }
@@ -538,6 +689,14 @@ export default function App() {
     try {
       const res = await googleSignIn();
       if (res) {
+        if (!isAuthorizedOwner(res.user)) {
+          await logout();
+          setGoogleUser(null);
+          setNeedsAuth(true);
+          setIsAuthChecked(true);
+          setAuthError('Доступ к этому личному приложению разрешён только владельцу (bakhrust@gmail.com).');
+          return;
+        }
         setGoogleUser(res.user);
         setNeedsAuth(false);
         setIsAuthChecked(true);
@@ -587,6 +746,8 @@ export default function App() {
     loadedUidRef.current = null;
     lastSyncedWorkspaceRef.current = null;
     lastSyncedHabitsRef.current = null;
+    lastSyncedNoteFoldersRef.current = null;
+    lastSyncedNotesRef.current = null;
     lastSyncedPrefsRef.current = '';
     setGoogleUser(null);
     setNeedsAuth(true);
@@ -596,12 +757,16 @@ export default function App() {
     setTargetCalendarId('primary');
     setWorkspace(createInitialWorkspaceData(new Date()));
     setHabits(createInitialHabits(new Date()));
+    setNoteFolders(createInitialNoteFolders());
+    setNotes(createInitialNotes(Date.now()));
     try {
       localStorage.removeItem('pland_workspace_v1');
       localStorage.removeItem('pland_board_v1');
       localStorage.removeItem('pland_gcal_prefs_v1');
       localStorage.removeItem(DEV_PREVIEW_STORAGE_KEY);
       localStorage.removeItem(DEV_PREVIEW_HABITS_KEY);
+      localStorage.removeItem(DEV_PREVIEW_NOTE_FOLDERS_KEY);
+      localStorage.removeItem(DEV_PREVIEW_NOTES_KEY);
     } catch {
       // ignore
     }
@@ -724,6 +889,75 @@ export default function App() {
   const handleSeedStarterHabits = () => {
     setHabits(createInitialHabits(new Date()));
     setNotice({ kind: 'success', text: 'Базовый набор привычек добавлен' });
+  };
+
+  // Notebook Handlers
+  const handleCreateNoteFolder = (payload: {
+    title: string;
+    parentId: string | null;
+    color: LabelColor;
+  }): NoteFolder => {
+    const created = createNoteFolder({
+      title: payload.title,
+      parentId: payload.parentId,
+      color: payload.color,
+      order: noteFolders.length,
+    });
+    setNoteFolders((prev) => [...prev, created]);
+    setNotice({ kind: 'success', text: `Папка «${created.title}» создана` });
+    return created;
+  };
+
+  const handleRenameNoteFolder = (folderId: string, title: string, color?: LabelColor) => {
+    const clean = title.trim().slice(0, 100);
+    if (!clean) return;
+    setNoteFolders((prev) =>
+      prev.map((f) =>
+        f.id === folderId ? { ...f, title: clean, color: color ?? f.color } : f
+      )
+    );
+    setNotice({ kind: 'success', text: `Папка «${clean}» обновлена` });
+  };
+
+  const handleDeleteNoteFolder = (folderId: string) => {
+    const target = noteFolders.find((f) => f.id === folderId);
+    const promoted = removeFolderAndPromoteChildren(noteFolders, notes, folderId);
+    setNoteFolders(promoted.folders);
+    setNotes(promoted.notes);
+    if (target) {
+      setNotice({ kind: 'success', text: `Папка «${target.title}» удалена, заметки сохранены` });
+    }
+  };
+
+  const handleCreateNote = (payload?: { folderId?: string | null; title?: string }): NotePage => {
+    const created = createNotePage({
+      folderId: payload?.folderId ?? null,
+      title: payload?.title ?? 'Новая заметка',
+      order: notes.length,
+    });
+    setNotes((prev) => [created, ...prev]);
+    return created;
+  };
+
+  const handleUpdateNote = useCallback(
+    (noteId: string, updater: (prev: NotePage) => NotePage) => {
+      setNotes((prev) => prev.map((n) => (n.id === noteId ? updater(n) : n)));
+    },
+    []
+  );
+
+  const handleDeleteNote = (noteId: string) => {
+    const target = notes.find((n) => n.id === noteId);
+    setNotes((prev) => prev.filter((n) => n.id !== noteId));
+    if (target) {
+      setNotice({ kind: 'success', text: `Заметка «${target.title}» удалена` });
+    }
+  };
+
+  const handleSeedStarterNotes = () => {
+    setNoteFolders(createInitialNoteFolders());
+    setNotes(createInitialNotes(Date.now()));
+    setNotice({ kind: 'success', text: 'Стартовый блокнот добавлен' });
   };
 
   // Board Handlers
@@ -1250,11 +1484,17 @@ export default function App() {
     );
   }
 
+  const isPlanView =
+    viewMode === 'board' ||
+    viewMode === 'week' ||
+    viewMode === 'month' ||
+    viewMode === 'timeline';
+
   return (
     <div className="h-dvh w-full flex flex-col overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
       <TopBar
         viewMode={viewMode}
-        onChangeView={handleChangeViewMode}
+        onSelectSection={handleSelectSection}
         isSignedIn={Boolean(googleUser) || isGuestMode}
         isGoogleConnected={isGoogleConnected}
         googleUserEmail={googleUser?.email ?? (isGuestMode ? 'Демо-режим' : null)}
@@ -1271,9 +1511,10 @@ export default function App() {
         onToggleTheme={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
       />
 
-      {viewMode !== 'habits' && (
+      {isPlanView && (
         <WorkspaceToolbar
           viewMode={viewMode}
+          onChangePlanView={handleChangePlanView}
           boards={workspace.boards}
           activeBoardId={activeBoard.id}
           onSelectBoard={handleSelectBoard}
@@ -1320,7 +1561,24 @@ export default function App() {
             </div>
           }
         >
-          {viewMode === 'habits' ? (
+          {viewMode === 'finance' || viewMode === 'sport' ? (
+            <UpcomingModuleView
+              section={viewMode}
+              onGoToPlan={() => handleSelectSection('plan')}
+            />
+          ) : viewMode === 'notes' ? (
+            <NotesView
+              folders={noteFolders}
+              notes={notes}
+              onCreateFolder={handleCreateNoteFolder}
+              onRenameFolder={handleRenameNoteFolder}
+              onDeleteFolder={handleDeleteNoteFolder}
+              onCreateNote={handleCreateNote}
+              onUpdateNote={handleUpdateNote}
+              onDeleteNote={handleDeleteNote}
+              onSeedStarterNotes={handleSeedStarterNotes}
+            />
+          ) : viewMode === 'habits' ? (
             <HabitsView
               habits={habits}
               onToggleHabitDay={handleToggleHabitDay}
@@ -1487,7 +1745,8 @@ export default function App() {
         )}
       </main>
 
-      <MobileBottomNav viewMode={viewMode} onChangeView={handleChangeViewMode} />
+      <MobileBottomNav viewMode={viewMode} onSelectSection={handleSelectSection} />
+      <OfflineIndicator />
 
       <Suspense fallback={null}>
         {cardModalState.isOpen && (

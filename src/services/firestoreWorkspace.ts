@@ -12,7 +12,12 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { createInitialHabits, createInitialWorkspaceData } from '../data/seedData';
+import {
+  createInitialHabits,
+  createInitialNoteFolders,
+  createInitialNotes,
+  createInitialWorkspaceData,
+} from '../data/seedData';
 import type {
   BoardList,
   BoardRecord,
@@ -22,8 +27,13 @@ import type {
   HabitItem,
   LabelColor,
   LabelDef,
+  NoteBlock,
+  NoteBlockType,
+  NoteFolder,
+  NotePage,
   WorkspaceData,
 } from '../types/planner';
+import { NOTE_BLOCK_TYPES } from '../utils/notesLogic';
 import { clampText, isValidEntityId } from '../utils/urlSafety';
 import { auth, db } from './firebaseClient';
 
@@ -197,6 +207,75 @@ function buildHabitFields(habit: HabitItem, ownerUid: string, order: number) {
   };
 }
 
+const VALID_NOTE_BLOCK_TYPES = new Set<NoteBlockType>(NOTE_BLOCK_TYPES);
+
+function sanitizeNoteBlockType(raw: unknown): NoteBlockType {
+  return typeof raw === 'string' && VALID_NOTE_BLOCK_TYPES.has(raw as NoteBlockType)
+    ? (raw as NoteBlockType)
+    : 'paragraph';
+}
+
+function sanitizeNoteBlocks(raw: unknown): NoteBlock[] {
+  return (Array.isArray(raw) ? raw : []).slice(0, 200).map((b, idx) => {
+    const rec = b && typeof b === 'object' ? (b as Record<string, unknown>) : {};
+    const type = sanitizeNoteBlockType(rec.type);
+    const indentNum = Math.round(Number(rec.indent) || 0);
+    return {
+      id: sanitizeId(rec.id, 'blk', idx),
+      type,
+      content: type === 'divider' ? '' : clampText(String(rec.content ?? ''), 4000),
+      checked: type === 'todo' ? Boolean(rec.checked) : false,
+      indent: Math.max(0, Math.min(3, indentNum)),
+    };
+  });
+}
+
+function buildNoteFolderMutableFields(folder: NoteFolder, order: number) {
+  const folderId = isValidEntityId(folder.id) ? folder.id : '';
+  const parentId =
+    folder.parentId && isValidEntityId(folder.parentId) && folder.parentId !== folderId
+      ? folder.parentId
+      : null;
+  return {
+    parentId,
+    title: clampText(folder.title.trim() || 'Папка', 100),
+    color: sanitizeColor(folder.color, 'blue'),
+    order: Math.max(0, Math.min(1000, Math.round(order))),
+  };
+}
+
+function buildNoteFolderFields(folder: NoteFolder, ownerUid: string, order: number) {
+  return {
+    id: sanitizeId(folder.id, 'folder', order),
+    ownerUid,
+    ...buildNoteFolderMutableFields(folder, order),
+  };
+}
+
+function buildNoteMutableFields(note: NotePage, order: number) {
+  const folderId = note.folderId && isValidEntityId(note.folderId) ? note.folderId : null;
+  return {
+    folderId,
+    title: clampText(note.title.trim() || 'Без названия', 200),
+    icon: clampText(note.icon || '📝', 16),
+    pinned: Boolean(note.pinned),
+    order: Math.max(0, Math.min(10000, Math.round(order))),
+    blocks: sanitizeNoteBlocks(note.blocks),
+    updatedAtMs:
+      typeof note.updatedAtMs === 'number' && Number.isFinite(note.updatedAtMs) && note.updatedAtMs >= 0
+        ? Math.round(note.updatedAtMs)
+        : Date.now(),
+  };
+}
+
+function buildNoteFields(note: NotePage, ownerUid: string, order: number) {
+  return {
+    id: sanitizeId(note.id, 'note', order),
+    ownerUid,
+    ...buildNoteMutableFields(note, order),
+  };
+}
+
 const LEGACY_WORKSPACE_KEY = 'pland_workspace_v1';
 const LEGACY_BOARD_KEY = 'pland_board_v1';
 const LEGACY_GCAL_PREFS_KEY = 'pland_gcal_prefs_v1';
@@ -261,6 +340,8 @@ function readAndClearLegacyLocalData(): {
 export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   workspace: WorkspaceData;
   habits: HabitItem[];
+  noteFolders: NoteFolder[];
+  notes: NotePage[];
   visibleCalendarIds: string[];
   targetCalendarId: string;
   theme: 'light' | 'dark';
@@ -304,6 +385,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         visibleCalendarIds: legacy.visibleCalendarIds,
         targetCalendarId: legacy.targetCalendarId || 'primary',
         theme: 'light',
+        notesSeeded: true,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -367,9 +449,39 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
       handleFirestoreError(err, OperationType.CREATE, habitsPath);
     }
 
+    // 4. Seed starter note folders & notes for new user workspace
+    const seedNoteFolders = createInitialNoteFolders();
+    const seedNotes = createInitialNotes(Date.now());
+    const foldersPath = `users/${uid}/noteFolders`;
+    const notesPath = `users/${uid}/notes`;
+    try {
+      const notesBatch = writeBatch(db);
+      seedNoteFolders.forEach((folder, idx) => {
+        const fields = buildNoteFolderFields(folder, uid, idx);
+        notesBatch.set(doc(db, 'users', uid, 'noteFolders', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedNotes.forEach((note, idx) => {
+        const fields = buildNoteFields(note, uid, idx);
+        notesBatch.set(doc(db, 'users', uid, 'notes', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await notesBatch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `${foldersPath}|${notesPath}`);
+    }
+
     return {
       workspace: seed,
       habits: seedHabits,
+      noteFolders: seedNoteFolders,
+      notes: seedNotes,
       visibleCalendarIds: legacy.visibleCalendarIds,
       targetCalendarId: legacy.targetCalendarId || 'primary',
       theme: 'light',
@@ -461,10 +573,93 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
     })
     .sort((a, b) => a.order - b.order);
 
+  // Load note folders and notes for existing user
+  const noteFoldersPath = `users/${uid}/noteFolders`;
+  const notesPath = `users/${uid}/notes`;
+  let noteFolderSnaps;
+  try {
+    noteFolderSnaps = await getDocs(
+      query(collection(db, 'users', uid, 'noteFolders'), where('ownerUid', '==', uid))
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, noteFoldersPath);
+  }
+
+  let noteSnaps;
+  try {
+    noteSnaps = await getDocs(
+      query(collection(db, 'users', uid, 'notes'), where('ownerUid', '==', uid))
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, notesPath);
+  }
+
   // Clean up any leftover legacy localStorage from before cloud sync
   readAndClearLegacyLocalData();
 
   const userData = userSnap.exists() ? userSnap.data() : {};
+  let noteFolders: NoteFolder[] = noteFolderSnaps.docs
+    .map((fDoc) => {
+      const d = fDoc.data();
+      return {
+        id: String(d.id),
+        parentId: typeof d.parentId === 'string' && d.parentId ? d.parentId : null,
+        title: String(d.title ?? 'Папка'),
+        color: sanitizeColor(d.color, 'blue'),
+        order: Number(d.order ?? 0),
+      };
+    })
+    .sort((a, b) => a.order - b.order);
+
+  let notes: NotePage[] = noteSnaps.docs
+    .map((nDoc) => {
+      const d = nDoc.data();
+      return {
+        id: String(d.id),
+        folderId: typeof d.folderId === 'string' && d.folderId ? d.folderId : null,
+        title: String(d.title ?? 'Без названия'),
+        icon: typeof d.icon === 'string' && d.icon ? d.icon : '📝',
+        pinned: Boolean(d.pinned),
+        order: Number(d.order ?? 0),
+        blocks: sanitizeNoteBlocks(d.blocks),
+        updatedAtMs: typeof d.updatedAtMs === 'number' ? d.updatedAtMs : Date.now(),
+      };
+    })
+    .sort((a, b) => a.order - b.order);
+
+  if (userSnap.exists() && !userData.notesSeeded && noteFolders.length === 0 && notes.length === 0) {
+    const seedFolders = createInitialNoteFolders();
+    const seedNotes = createInitialNotes(Date.now());
+    try {
+      const seedBatch = writeBatch(db);
+      seedFolders.forEach((folder, idx) => {
+        const fields = buildNoteFolderFields(folder, uid, idx);
+        seedBatch.set(doc(db, 'users', uid, 'noteFolders', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedNotes.forEach((note, idx) => {
+        const fields = buildNoteFields(note, uid, idx);
+        seedBatch.set(doc(db, 'users', uid, 'notes', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedBatch.update(doc(db, 'users', uid), {
+        notesSeeded: true,
+        updatedAt: serverTimestamp(),
+      });
+      await seedBatch.commit();
+      noteFolders = seedFolders;
+      notes = seedNotes;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, notesPath);
+    }
+  }
+
   const savedActiveBoardId = typeof userData.activeBoardId === 'string' ? userData.activeBoardId : '';
   const activeBoardId = boards.some((b) => b.id === savedActiveBoardId)
     ? savedActiveBoardId
@@ -477,6 +672,8 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
       boards,
     },
     habits,
+    noteFolders,
+    notes,
     visibleCalendarIds: Array.isArray(userData.visibleCalendarIds)
       ? (userData.visibleCalendarIds as string[])
       : [],
@@ -709,3 +906,106 @@ export async function syncHabitsChangesToFirestore(
     }
   }
 }
+
+export async function syncNoteFoldersChangesToFirestore(
+  uid: string,
+  prevFolders: NoteFolder[],
+  nextFolders: NoteFolder[]
+): Promise<void> {
+  const prevMap = new Map(prevFolders.map((f, idx) => [f.id, { folder: f, order: idx }]));
+  const nextMap = new Map(nextFolders.map((f, idx) => [f.id, { folder: f, order: idx }]));
+
+  for (const [folderId] of prevMap) {
+    if (!nextMap.has(folderId)) {
+      const folderPath = `users/${uid}/noteFolders/${folderId}`;
+      try {
+        await deleteDoc(doc(db, 'users', uid, 'noteFolders', folderId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, folderPath);
+      }
+    }
+  }
+
+  for (const [folderId, { folder: newFolder, order }] of nextMap) {
+    const prevEntry = prevMap.get(folderId);
+    const folderPath = `users/${uid}/noteFolders/${folderId}`;
+
+    if (!prevEntry) {
+      const fields = buildNoteFolderFields(newFolder, uid, order);
+      try {
+        await setDoc(doc(db, 'users', uid, 'noteFolders', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, folderPath);
+      }
+    } else if (
+      prevEntry.order !== order ||
+      JSON.stringify(prevEntry.folder) !== JSON.stringify(newFolder)
+    ) {
+      const mutable = buildNoteFolderMutableFields(newFolder, order);
+      try {
+        await updateDoc(doc(db, 'users', uid, 'noteFolders', folderId), {
+          ...mutable,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, folderPath);
+      }
+    }
+  }
+}
+
+export async function syncNotesChangesToFirestore(
+  uid: string,
+  prevNotes: NotePage[],
+  nextNotes: NotePage[]
+): Promise<void> {
+  const prevMap = new Map(prevNotes.map((n, idx) => [n.id, { note: n, order: idx }]));
+  const nextMap = new Map(nextNotes.map((n, idx) => [n.id, { note: n, order: idx }]));
+
+  for (const [noteId] of prevMap) {
+    if (!nextMap.has(noteId)) {
+      const notePath = `users/${uid}/notes/${noteId}`;
+      try {
+        await deleteDoc(doc(db, 'users', uid, 'notes', noteId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, notePath);
+      }
+    }
+  }
+
+  for (const [noteId, { note: newNote, order }] of nextMap) {
+    const prevEntry = prevMap.get(noteId);
+    const notePath = `users/${uid}/notes/${noteId}`;
+
+    if (!prevEntry) {
+      const fields = buildNoteFields(newNote, uid, order);
+      try {
+        await setDoc(doc(db, 'users', uid, 'notes', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, notePath);
+      }
+    } else if (
+      prevEntry.order !== order ||
+      JSON.stringify(prevEntry.note) !== JSON.stringify(newNote)
+    ) {
+      const mutable = buildNoteMutableFields(newNote, order);
+      try {
+        await updateDoc(doc(db, 'users', uid, 'notes', noteId), {
+          ...mutable,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, notePath);
+      }
+    }
+  }
+}
+

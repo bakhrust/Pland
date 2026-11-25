@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { GoogleSignInButton } from './GoogleSignInButton';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface AuthGateScreenProps {
   isLoggingIn: boolean;
@@ -124,14 +125,17 @@ export function AuthGateScreen({ isLoggingIn, authError, onLogin, onGuestLogin }
             </a>
           </nav>
 
-          <button
-            type="button"
-            onClick={onLogin}
-            disabled={isLoggingIn}
-            className="px-4 py-2 min-h-10 text-xs font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-600"
-          >
-            {isLoggingIn ? 'Вход...' : 'Войти через Google'}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <PWAInstallButton compact />
+            <button
+              type="button"
+              onClick={onLogin}
+              disabled={isLoggingIn}
+              className="px-4 py-2 min-h-10 text-xs font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-600"
+            >
+              {isLoggingIn ? 'Вход...' : 'Войти через Google'}
+            </button>
+          </div>
         </div>
       </header>
 

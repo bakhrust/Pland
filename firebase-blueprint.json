@@ -39,6 +39,9 @@
           "type": "string",
           "enum": ["light", "dark"]
         },
+        "notesSeeded": {
+          "type": "boolean"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -287,6 +290,125 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "NoteFolderDoc": {
+      "title": "NoteFolderDoc",
+      "description": "A personal notebook folder (supports nested parentId) owned by a user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "parentId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "color": {
+          "type": "string",
+          "enum": ["blue", "emerald", "violet", "amber", "rose"]
+        },
+        "order": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "parentId",
+        "title",
+        "color",
+        "order",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "NoteDoc": {
+      "title": "NoteDoc",
+      "description": "A Notion-style block note page belonging to a user, optionally placed inside a folder.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "folderId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "icon": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "order": {
+          "type": "number"
+        },
+        "blocks": {
+          "type": "array",
+          "description": "Ordered Notion-style content blocks (max 200)."
+        },
+        "updatedAtMs": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "folderId",
+        "title",
+        "icon",
+        "pinned",
+        "order",
+        "blocks",
+        "updatedAtMs",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -305,6 +427,14 @@
     "/users/{userId}/habits/{habitId}": {
       "schema": { "$ref": "#/entities/HabitDoc" },
       "description": "User-owned recurring habits with bounded weekday schedules and daily completion logs."
+    },
+    "/users/{userId}/noteFolders/{folderId}": {
+      "schema": { "$ref": "#/entities/NoteFolderDoc" },
+      "description": "User-owned notebook folders supporting hierarchical organization."
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/NoteDoc" },
+      "description": "User-owned Notion-style pages with bounded typed content blocks."
     }
   }
 }

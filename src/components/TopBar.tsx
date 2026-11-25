@@ -1,19 +1,20 @@
 import {
   Calendar,
-  CalendarDays,
   CalendarRange,
   CheckCircle2,
-  GanttChart,
-  Kanban,
+  Dumbbell,
+  FileText,
   LogOut,
   Moon,
   Sun,
+  Wallet,
 } from 'lucide-react';
-import type { ViewMode } from '../types/planner';
+import type { MainSection, ViewMode } from '../types/planner';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface TopBarProps {
   viewMode: ViewMode;
-  onChangeView: (view: ViewMode) => void;
+  onSelectSection: (section: MainSection) => void;
   isSignedIn: boolean;
   isGoogleConnected: boolean;
   googleUserEmail: string | null;
@@ -24,17 +25,24 @@ interface TopBarProps {
   onToggleTheme: () => void;
 }
 
-const VIEW_ITEMS: Array<{ id: ViewMode; label: string; Icon: typeof Kanban }> = [
-  { id: 'board', label: 'Доска', Icon: Kanban },
-  { id: 'week', label: 'Неделя', Icon: CalendarRange },
-  { id: 'month', label: 'Месяц', Icon: CalendarDays },
-  { id: 'timeline', label: 'Таймлайн', Icon: GanttChart },
+const SECTION_ITEMS: Array<{ id: MainSection; label: string; Icon: typeof CalendarRange }> = [
+  { id: 'plan', label: 'План', Icon: CalendarRange },
   { id: 'habits', label: 'Привычки', Icon: CheckCircle2 },
+  { id: 'notes', label: 'Заметки', Icon: FileText },
+  { id: 'finance', label: 'Финансы', Icon: Wallet },
+  { id: 'sport', label: 'Спорт', Icon: Dumbbell },
 ];
+
+export function getMainSection(viewMode: ViewMode): MainSection {
+  if (viewMode === 'board' || viewMode === 'week' || viewMode === 'month' || viewMode === 'timeline') {
+    return 'plan';
+  }
+  return viewMode;
+}
 
 export function TopBar({
   viewMode,
-  onChangeView,
+  onSelectSection,
   isSignedIn,
   isGoogleConnected,
   googleUserEmail,
@@ -44,32 +52,36 @@ export function TopBar({
   theme,
   onToggleTheme,
 }: TopBarProps) {
+  const activeSection = getMainSection(viewMode);
+
   return (
     <header className="h-12 md:h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 md:px-6 flex items-center justify-between gap-2 md:gap-8 shrink-0 text-slate-900 dark:text-slate-100">
       {/* Zone 1: Single-line Brand Wordmark */}
       <a
-        href="#board"
+        href="#plan"
         onClick={(e) => {
           e.preventDefault();
-          onChangeView('board');
+          onSelectSection('plan');
         }}
         className="font-display text-base md:text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-blue-600 rounded"
       >
         PLAND
       </a>
 
-      {/* Zone 2: Desktop single-line navigation links */}
-      <nav aria-label="Режимы планирования" className="hidden md:flex items-center gap-6">
-        {VIEW_ITEMS.map((item) => {
-          const active = viewMode === item.id;
+      {/* Zone 2: Desktop 5 main super-app modules */}
+      <nav aria-label="Разделы приложения" className="hidden md:flex items-center gap-6">
+        {SECTION_ITEMS.map((item) => {
+          const active = activeSection === item.id;
           return (
             <button
               key={item.id}
               type="button"
-              onClick={() => onChangeView(item.id)}
+              onClick={() => onSelectSection(item.id)}
               aria-current={active ? 'page' : undefined}
               className={`relative py-4 text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-600 ${
-                active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                active
+                  ? 'text-blue-600 dark:text-blue-400'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
               {item.label}
@@ -81,8 +93,9 @@ export function TopBar({
         })}
       </nav>
 
-      {/* Zone 3: Google Calendar & Solo Account action */}
+      {/* Zone 3: PWA Install, Theme, Google Calendar & Account */}
       <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
+        <PWAInstallButton compact />
 
         <button
           type="button"
@@ -136,22 +149,24 @@ export function TopBar({
 
 interface MobileBottomNavProps {
   viewMode: ViewMode;
-  onChangeView: (view: ViewMode) => void;
+  onSelectSection: (section: MainSection) => void;
 }
 
-export function MobileBottomNav({ viewMode, onChangeView }: MobileBottomNavProps) {
+export function MobileBottomNav({ viewMode, onSelectSection }: MobileBottomNavProps) {
+  const activeSection = getMainSection(viewMode);
+
   return (
     <nav
       aria-label="Мобильная навигация"
       className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_rgba(15,23,42,0.06)] dark:shadow-[0_-4px_16px_rgba(0,0,0,0.3)]"
     >
-      {VIEW_ITEMS.map(({ id, label, Icon }) => {
-        const active = viewMode === id;
+      {SECTION_ITEMS.map(({ id, label, Icon }) => {
+        const active = activeSection === id;
         return (
           <button
             key={id}
             type="button"
-            onClick={() => onChangeView(id)}
+            onClick={() => onSelectSection(id)}
             aria-current={active ? 'page' : undefined}
             className={`h-14 flex flex-col items-center justify-center gap-0.5 px-0.5 text-[10px] font-medium transition-colors cursor-pointer min-w-0 ${
               active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'

@@ -1,4 +1,6 @@
-export type ViewMode = 'board' | 'week' | 'month' | 'timeline' | 'habits';
+export type PlanSubView = 'board' | 'week' | 'month' | 'timeline';
+export type MainSection = 'plan' | 'habits' | 'notes' | 'finance' | 'sport';
+export type ViewMode = PlanSubView | 'habits' | 'notes' | 'finance' | 'sport';
 
 export type TimelineGroupBy = 'list' | 'label';
 
@@ -129,5 +131,45 @@ export interface HabitItem {
   order: number;
   /** Map of YYYY-MM-DD -> completed count */
   completions: Record<string, number>;
+}
+
+export type NoteBlockType =
+  | 'paragraph'
+  | 'heading1'
+  | 'heading2'
+  | 'heading3'
+  | 'bullet'
+  | 'numbered'
+  | 'todo'
+  | 'quote'
+  | 'callout'
+  | 'code'
+  | 'divider';
+
+export interface NoteBlock {
+  id: string;
+  type: NoteBlockType;
+  content: string;
+  checked: boolean;
+  indent: number;
+}
+
+export interface NoteFolder {
+  id: string;
+  parentId: string | null;
+  title: string;
+  color: LabelColor;
+  order: number;
+}
+
+export interface NotePage {
+  id: string;
+  folderId: string | null;
+  title: string;
+  icon: string;
+  pinned: boolean;
+  order: number;
+  blocks: NoteBlock[];
+  updatedAtMs: number;
 }
 

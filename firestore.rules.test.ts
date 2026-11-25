@@ -7,9 +7,10 @@ import { clampText, isValidEntityId, safeExternalUrl } from './src/utils/urlSafe
 const rulesContent = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
 
 test('firestore.rules includes all Eight Pillars guards', () => {
-  // Pillar 1 & 4: Default deny + verified email + owner gate
+  // Pillar 1 & 4: Default deny + verified email + owner allowlist + owner UID gate
   assert.match(rulesContent, /match \/\{document=\*\*\}\s*\{\s*allow read, write: if false;/);
   assert.match(rulesContent, /request\.auth\.token\.email_verified == true/);
+  assert.match(rulesContent, /request\.auth\.token\.email == 'bakhrust@gmail\.com'/);
   assert.match(rulesContent, /request\.auth\.uid == userId/);
 
   // Pillar 2 & 3: Validation helpers + ID regex hardening
@@ -19,12 +20,18 @@ test('firestore.rules includes all Eight Pillars guards', () => {
   assert.match(rulesContent, /function isValidCardDoc\(/);
   assert.match(rulesContent, /function isValidHabitDoc\(/);
   assert.match(rulesContent, /match \/habits\/\{habitId\}/);
+  assert.match(rulesContent, /function isValidNoteBlock\(/);
+  assert.match(rulesContent, /function isValidNoteFolderDoc\(/);
+  assert.match(rulesContent, /function isValidNoteDoc\(/);
+  assert.match(rulesContent, /match \/noteFolders\/\{folderId\}/);
+  assert.match(rulesContent, /match \/notes\/\{noteId\}/);
 
   // Pillar 5 & 8: Bounded arrays + non-blanket list rules
   assert.match(rulesContent, /allow list: if false;/);
   assert.match(rulesContent, /existing\(\)\.ownerUid == request\.auth\.uid/);
   assert.match(rulesContent, /data\.checklist\.size\(\) <= 50/);
   assert.match(rulesContent, /data\.completions\.size\(\) <= 730/);
+  assert.match(rulesContent, /data\.blocks\.size\(\) <= 200/);
 
   // Master gate & temporal integrity
   assert.match(rulesContent, /exists\(\/databases\/\$\(database\)\/documents\/users\/\$\(userId\)\/boards\/\$\(boardId\)\)/);

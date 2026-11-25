@@ -1,11 +1,19 @@
-import { ChevronLeft, ChevronRight, ListTodo, Plus, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
+import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, GanttChart, Kanban, ListTodo, Plus, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import { useState } from 'react';
-import type { BoardRecord, FilterState, LabelColor, LabelDef, TimelineGroupBy, ViewMode } from '../types/planner';
+import type { BoardRecord, FilterState, LabelColor, LabelDef, PlanSubView, TimelineGroupBy, ViewMode } from '../types/planner';
 import { formatRussianMonthYear, formatRussianShortDate, getWeekDays } from '../utils/dateUtils';
 import { BoardSwitcher } from './BoardSwitcher';
 
+const PLAN_SUB_VIEWS: Array<{ id: PlanSubView; label: string; Icon: typeof Kanban }> = [
+  { id: 'board', label: 'Доска', Icon: Kanban },
+  { id: 'week', label: 'Неделя', Icon: CalendarRange },
+  { id: 'month', label: 'Месяц', Icon: CalendarDays },
+  { id: 'timeline', label: 'Таймлайн', Icon: GanttChart },
+];
+
 interface WorkspaceToolbarProps {
   viewMode: ViewMode;
+  onChangePlanView: (view: PlanSubView) => void;
   boards: BoardRecord[];
   activeBoardId: string;
   onSelectBoard: (boardId: string) => void;
@@ -32,6 +40,7 @@ interface WorkspaceToolbarProps {
 
 export function WorkspaceToolbar({
   viewMode,
+  onChangePlanView,
   boards,
   activeBoardId,
   onSelectBoard,
@@ -77,8 +86,34 @@ export function WorkspaceToolbar({
   return (
     <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 md:px-6 py-2 md:py-2.5 space-y-2 shrink-0 text-slate-900 dark:text-slate-100">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        {/* Left: Board Switcher + Context & Date Controls */}
-        <div className="flex flex-wrap items-center gap-2 md:gap-3 min-w-0">
+        {/* Left: Planner Sub-views + Board Switcher + Context & Date Controls */}
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 min-w-0 w-full sm:w-auto">
+          <div
+            role="group"
+            aria-label="Режимы планирования"
+            className="grid grid-cols-4 sm:inline-flex w-full sm:w-auto items-center gap-0.5 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg shrink-0"
+          >
+            {PLAN_SUB_VIEWS.map(({ id, label, Icon }) => {
+              const active = viewMode === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onChangePlanView(id)}
+                  aria-pressed={active}
+                  className={`inline-flex items-center justify-center gap-1 px-2 md:px-2.5 py-1.5 text-[11px] md:text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
+                    active
+                      ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0 hidden xs:inline sm:inline" aria-hidden="true" />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+
           <BoardSwitcher
             boards={boards}
             activeBoardId={activeBoardId}

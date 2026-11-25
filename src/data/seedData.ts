@@ -1,4 +1,4 @@
-import type { BoardState, WorkspaceData } from '../types/planner';
+import type { BoardState, NoteFolder, NotePage, WorkspaceData } from '../types/planner';
 import { addDays, getWeekStartMonday, toLocalDateKey } from '../utils/dateUtils';
 
 export function createInitialBoardState(referenceDate = new Date()): BoardState {
@@ -280,3 +280,169 @@ export function createInitialHabits(referenceDate = new Date()): import('../type
     },
   ];
 }
+
+export function createInitialNoteFolders(): NoteFolder[] {
+  return [
+    { id: 'folder-personal', parentId: null, title: 'Личное', color: 'blue', order: 0 },
+    { id: 'folder-projects', parentId: null, title: 'Проекты', color: 'violet', order: 1 },
+    { id: 'folder-ideas', parentId: null, title: 'Идеи и знания', color: 'amber', order: 2 },
+  ];
+}
+
+export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
+  return [
+    {
+      id: 'note-welcome',
+      folderId: 'folder-personal',
+      title: 'Добро пожаловать в личный блокнот',
+      icon: '📝',
+      pinned: true,
+      order: 0,
+      updatedAtMs: referenceTime,
+      blocks: [
+        {
+          id: 'blk-w-1',
+          type: 'callout',
+          content: 'Подсказка: введите «/» в пустой строке или используйте быстрые команды вроде «# », «- », «[] », «1. », «> » для создания блоков как в Notion.',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-w-2',
+          type: 'heading2',
+          content: 'Что уже можно делать в заметках',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-w-3',
+          type: 'todo',
+          content: 'Создавать папки и вложенные подпапки слева',
+          checked: true,
+          indent: 0,
+        },
+        {
+          id: 'blk-w-4',
+          type: 'todo',
+          content: 'Собирать списки дел, маркированные и нумерованные списки',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-w-5',
+          type: 'todo',
+          content: 'Искать по всем страницам и закреплять важные в «Избранном»',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-w-6',
+          type: 'quote',
+          content: 'Хорошая система заметок снимает нагрузку с памяти и оставляет место для ясного мышления.',
+          checked: false,
+          indent: 0,
+        },
+      ],
+    },
+    {
+      id: 'note-roadmap',
+      folderId: 'folder-projects',
+      title: 'Дорожная карта супер-приложения PLAND',
+      icon: '🚀',
+      pinned: true,
+      order: 1,
+      updatedAtMs: referenceTime - 3600 * 1000,
+      blocks: [
+        {
+          id: 'blk-r-1',
+          type: 'heading2',
+          content: 'Этапы развития',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-r-2',
+          type: 'numbered',
+          content: 'Планирование, доски и календарь с привычками',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-r-3',
+          type: 'numbered',
+          content: 'Блокнот в стиле Notion с папками и блоками',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-r-4',
+          type: 'numbered',
+          content: 'Учёт личных финансов и категорий бюджета',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-r-5',
+          type: 'numbered',
+          content: 'Спорт, подходы, веса и дневник тренировок',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-r-6',
+          type: 'divider',
+          content: '',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-r-7',
+          type: 'paragraph',
+          content: 'Все данные привязаны только к вашему личному аккаунту Google и доступны на компьютере и телефоне.',
+          checked: false,
+          indent: 0,
+        },
+      ],
+    },
+    {
+      id: 'note-reading',
+      folderId: 'folder-ideas',
+      title: 'Конспекты и полезные мысли',
+      icon: '💡',
+      pinned: false,
+      order: 2,
+      updatedAtMs: referenceTime - 24 * 3600 * 1000,
+      blocks: [
+        {
+          id: 'blk-i-1',
+          type: 'heading3',
+          content: 'Правило трёх приоритетов дня',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-i-2',
+          type: 'bullet',
+          content: 'Главная задача утра — без отвлечений и мессенджеров',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-i-3',
+          type: 'bullet',
+          content: 'Две поддерживающие задачи после обеда',
+          checked: false,
+          indent: 0,
+        },
+        {
+          id: 'blk-i-4',
+          type: 'code',
+          content: '// Мини-формула фокуса:\nconst focus = singleTask + deepWorkMinutes(50);',
+          checked: false,
+          indent: 0,
+        },
+      ],
+    },
+  ];
+}
+

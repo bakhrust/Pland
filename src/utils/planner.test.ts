@@ -20,8 +20,8 @@ import {
   scheduleCardAtSlot,
   shiftCardDatesByDays,
 } from './boardLogic';
-import { createInitialWorkspaceData } from '../data/seedData';
-import type { CardItem, HabitItem } from '../types/planner';
+import { createInitialNoteFolders, createInitialNotes, createInitialWorkspaceData } from '../data/seedData';
+import type { CardItem, HabitItem, NoteBlock } from '../types/planner';
 import {
   adjustHabitDayCount,
   computeHabitStats,
@@ -29,6 +29,17 @@ import {
   isHabitDoneOnDay,
   toggleOrIncrementHabitDay,
 } from './habitLogic';
+import {
+  computeNumberedListIndices,
+  createNoteBlock,
+  detectMarkdownBlockShortcut,
+  filterNotesByQuery,
+  getChecklistStats,
+  getDescendantFolderIds,
+  insertBlockAfter,
+  moveBlockByOffset,
+  removeFolderAndPromoteChildren,
+} from './notesLogic';
 
 const makeCard = (overrides: Partial<CardItem> = {}): CardItem => ({
   id: 'c1',
@@ -274,4 +285,69 @@ test('habitLogic computes streaks, quantitative targets, and daily summary accur
   assert.equal(summary.topStreak, 3);
 });
 
+test('notesLogic computes numbered list indices, markdown shortcuts, and checklist stats', () => {
+  const blocks: NoteBlock[] = [
+    createNoteBlock('numbered', 'Первый', { id: 'b1' }),
+    createNoteBlock('numbered', 'Второй', { id: 'b2' }),
+    createNoteBlock('numbered', 'Подпункт', { id: 'b3', indent: 1 }),
+    createNoteBlock('paragraph', 'Разделитель текста', { id: 'b4' }),
+    createNoteBlock('numbered', 'Снова с единицы', { id: 'b5' }),
+    createNoteBlock('todo', 'Задача 1', { id: 'b6', checked: true }),
+    createNoteBlock('todo', 'Задача 2', { id: 'b7', checked: false }),
+  ];
 
+  const indices = computeNumberedListIndices(blocks);
+  assert.equal(indices.get('b1'), 1);
+  assert.equal(indices.get('b2'), 2);
+  assert.equal(indices.get('b3'), 1);
+  assert.equal(indices.get('b5'), 1);
+
+  assert.deepEqual(detectMarkdownBlockShortcut('# Заголовок'), {
+    type: 'heading1',
+    content: 'Заголовок',
+  });
+  assert.deepEqual(detectMarkdownBlockShortcut('[] Купить кофе'), {
+    type: 'todo',
+    content: 'Купить кофе',
+  });
+  assert.deepEqual(detectMarkdownBlockShortcut('---'), {
+    type: 'divider',
+    content: '',
+  });
+  assert.equal(detectMarkdownBlockShortcut('Обычный текст'), null);
+
+  assert.deepEqual(getChecklistStats(blocks), { total: 2, done: 1 });
+
+  const afterInsert = insertBlockAfter(blocks, 'b1', createNoteBlock('bullet', 'Вставка', { id: 'b-ins' }));
+  assert.equal(afterInsert[1].id, 'b-ins');
+
+  const moved = moveBlockByOffset(afterInsert, 'b-ins', -1);
+  assert.equal(moved[0].id, 'b-ins');
+});
+
+test('notesLogic filters notes across titles/folders/blocks and promotes children on folder deletion', () => {
+  const folders = [
+    ...createInitialNoteFolders(),
+    { id: 'folder-sub', parentId: 'folder-projects', title: 'Спринты', color: 'blue' as const, order: 3 },
+  ];
+  const notes = createInitialNotes(1_700_000_000_000);
+
+  assert.equal(folders.length, 4);
+  assert.equal(notes.length, 3);
+
+  const byBlockContent = filterNotesByQuery(notes, folders, 'фокуса');
+  assert.equal(byBlockContent.length, 1);
+  assert.equal(byBlockContent[0].id, 'note-reading');
+
+  const byFolderName = filterNotesByQuery(notes, folders, 'Проекты');
+  assert.equal(byFolderName.length, 1);
+  assert.equal(byFolderName[0].id, 'note-roadmap');
+
+  const descendants = getDescendantFolderIds(folders, 'folder-projects');
+  assert.equal(descendants.has('folder-sub'), true);
+
+  const promoted = removeFolderAndPromoteChildren(folders, notes, 'folder-projects');
+  assert.equal(promoted.folders.some((f) => f.id === 'folder-projects'), false);
+  assert.equal(promoted.folders.find((f) => f.id === 'folder-sub')?.parentId, null);
+  assert.equal(promoted.notes.find((n) => n.id === 'note-roadmap')?.folderId, null);
+});

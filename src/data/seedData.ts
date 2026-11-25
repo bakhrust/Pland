@@ -303,7 +303,7 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
         {
           id: 'blk-w-1',
           type: 'callout',
-          content: 'Подсказка: введите «/» в пустой строке или используйте быстрые команды вроде «# », «- », «[] », «1. », «> » для создания блоков как в Notion.',
+          content: 'Подсказка: введите «/» в пустой строке для выбора блока или «[[» чтобы связать страницу с другой заметкой для графа знаний.',
           checked: false,
           indent: 0,
         },
@@ -331,14 +331,14 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
         {
           id: 'blk-w-5',
           type: 'todo',
-          content: 'Искать по всем страницам и закреплять важные в «Избранном»',
+          content: 'Искать по всем страницам, скачивать в .md и смотреть [[Дорожная карта супер-приложения PLAND]] на графе связей',
           checked: false,
           indent: 0,
         },
         {
           id: 'blk-w-6',
           type: 'quote',
-          content: 'Хорошая система заметок снимает нагрузку с памяти и оставляет место для ясного мышления.',
+          content: 'Хорошая система заметок снимает нагрузку с памяти — см. [[Конспекты и полезные мысли]].',
           checked: false,
           indent: 0,
         },
@@ -370,7 +370,7 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
         {
           id: 'blk-r-3',
           type: 'numbered',
-          content: 'Блокнот в стиле Notion с папками и блоками',
+          content: 'Блокнот в стиле Notion + Obsidian (граф и экспорт .md) — подробнее в [[Добро пожаловать в личный блокнот]]',
           checked: false,
           indent: 0,
         },
@@ -423,7 +423,7 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
         {
           id: 'blk-i-2',
           type: 'bullet',
-          content: 'Главная задача утра — без отвлечений и мессенджеров',
+          content: 'Главная задача утра — без отвлечений и мессенджеров (сверяться с [[Дорожная карта супер-приложения PLAND]])',
           checked: false,
           indent: 0,
         },

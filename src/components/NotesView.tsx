@@ -1,4 +1,5 @@
 import {
+  Archive,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
@@ -7,17 +8,20 @@ import {
   ChevronDown,
   ChevronRight,
   Code2,
+  Download,
   FilePlus2,
   FileText,
   Folder,
   FolderOpen,
   FolderPlus,
+  GitFork,
   Heading1,
   Heading2,
   Heading3,
   IndentDecrease,
   IndentIncrease,
   Lightbulb,
+  Link2,
   List,
   ListOrdered,
   Minus,
@@ -36,6 +40,7 @@ import type { KeyboardEvent } from 'react';
 import type { LabelColor, NoteBlock, NoteBlockType, NoteFolder, NotePage } from '../types/planner';
 import {
   NOTE_ICONS,
+  buildNotesZipBlob,
   computeNumberedListIndices,
   countNoteWords,
   createNoteBlock,
@@ -46,7 +51,11 @@ import {
   getDescendantFolderIds,
   insertBlockAfter,
   moveBlockByOffset,
+  noteToMarkdown,
+  resolveNoteLinks,
+  sanitizeMarkdownFilename,
 } from '../utils/notesLogic';
+import { NotesGraphView } from './NotesGraphView';
 
 interface NotesViewProps {
   folders: NoteFolder[];
@@ -154,11 +163,15 @@ export function NotesView({
   onSeedStarterNotes,
 }: NotesViewProps) {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(() => notes[0]?.id ?? null);
+  const [notebookTab, setNotebookTab] = useState<'editor' | 'graph'>('editor');
   const [mobileScreen, setMobileScreen] = useState<'sidebar' | 'editor'>('sidebar');
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(() => new Set());
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [slashBlockId, setSlashBlockId] = useState<string | null>(null);
+  const [wikiLinkBlockId, setWikiLinkBlockId] = useState<string | null>(null);
+  const [wikiLinkQuery, setWikiLinkQuery] = useState('');
+  const [showInsertLinkPicker, setShowInsertLinkPicker] = useState(false);
   const [typeMenuBlockId, setTypeMenuBlockId] = useState<string | null>(null);
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [confirmDeleteNoteId, setConfirmDeleteNoteId] = useState<string | null>(null);
@@ -208,8 +221,12 @@ export function NotesView({
     setSelectedNoteId(noteId);
     setConfirmDeleteNoteId(null);
     setSlashBlockId(null);
+    setWikiLinkBlockId(null);
+    setWikiLinkQuery('');
+    setShowInsertLinkPicker(false);
     setTypeMenuBlockId(null);
     setShowIconPicker(false);
+    setNotebookTab('editor');
     setMobileScreen('editor');
   };
 
@@ -224,6 +241,7 @@ export function NotesView({
     }
     setSelectedNoteId(created.id);
     setConfirmDeleteNoteId(null);
+    setNotebookTab('editor');
     setMobileScreen('editor');
   };
 
@@ -319,6 +337,44 @@ export function NotesView({
     [activeNote]
   );
 
+  const { outgoingById, backlinksById } = useMemo(
+    () => resolveNoteLinks(notes),
+    [notes]
+  );
+
+  const activeOutgoing = activeNote ? outgoingById.get(activeNote.id) ?? [] : [];
+  const activeBacklinks = activeNote ? backlinksById.get(activeNote.id) ?? [] : [];
+
+  const triggerBlobDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleDownloadActiveNoteMarkdown = () => {
+    if (!activeNote) return;
+    const folderPath =
+      activeFolderBreadcrumb.length > 0
+        ? activeFolderBreadcrumb.map((f) => f.title).join('/')
+        : null;
+    const markdown = noteToMarkdown(activeNote, folderPath);
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    triggerBlobDownload(blob, sanitizeMarkdownFilename(activeNote.title, activeNote.id));
+  };
+
+  const handleDownloadAllZip = () => {
+    if (notes.length === 0) return;
+    const blob = buildNotesZipBlob(notes, folders);
+    const today = new Date().toISOString().slice(0, 10);
+    triggerBlobDownload(blob, `pland-notes-${today}.zip`);
+  };
+
   // Block mutations on activeNote
   const updateActiveBlocks = (mutator: (blocks: NoteBlock[]) => NoteBlock[]) => {
     if (!activeNote) return;
@@ -340,6 +396,16 @@ export function NotesView({
       setSlashBlockId(block.id);
     } else if (slashBlockId === block.id) {
       setSlashBlockId(null);
+    }
+
+    // Check [[wiki-link]] autocomplete trigger
+    const wikiMatch = block.type !== 'code' ? rawValue.match(/\[\[([^[\]\n]*)$/) : null;
+    if (wikiMatch && !wikiMatch[1].includes(']]')) {
+      setWikiLinkBlockId(block.id);
+      setWikiLinkQuery(wikiMatch[1]);
+    } else if (wikiLinkBlockId === block.id) {
+      setWikiLinkBlockId(null);
+      setWikiLinkQuery('');
     }
 
     // Notion-style markdown auto-conversion on paragraph blocks
@@ -375,6 +441,45 @@ export function NotesView({
     updateActiveBlocks((blocks) =>
       blocks.map((b) => (b.id === block.id ? { ...b, content: rawValue } : b))
     );
+  };
+
+  const handleInsertWikiLinkIntoBlock = (blockId: string, targetTitle: string) => {
+    if (!activeNote) return;
+    setWikiLinkBlockId(null);
+    setWikiLinkQuery('');
+    updateActiveBlocks((blocks) =>
+      blocks.map((b) => {
+        if (b.id !== blockId) return b;
+        const replaced = /\[\[([^[\]\n]*)$/.test(b.content)
+          ? b.content.replace(/\[\[([^[\]\n]*)$/, `[[${targetTitle}]]`)
+          : `${b.content ? `${b.content} ` : ''}[[${targetTitle}]]`;
+        return { ...b, content: replaced };
+      })
+    );
+    scheduleBlockFocus(blockId, true);
+  };
+
+  const handleQuickInsertLink = (targetNote: NotePage) => {
+    if (!activeNote) return;
+    setShowInsertLinkPicker(false);
+    const linkToken = `[[${targetNote.title || 'Без названия'}]]`;
+    const focused = activeNote.blocks.find(
+      (b) => b.id === focusedBlockId && b.type !== 'divider' && b.type !== 'code'
+    );
+    if (focused) {
+      updateActiveBlocks((blocks) =>
+        blocks.map((b) =>
+          b.id === focused.id
+            ? { ...b, content: b.content ? `${b.content} ${linkToken}` : linkToken }
+            : b
+        )
+      );
+      scheduleBlockFocus(focused.id, true);
+      return;
+    }
+    const newBlock = createNoteBlock('paragraph', `Связь: ${linkToken}`);
+    updateActiveBlocks((blocks) => [...blocks, newBlock]);
+    scheduleBlockFocus(newBlock.id, true);
   };
 
   const handleSelectSlashOrBlockType = (blockId: string, nextType: NoteBlockType) => {
@@ -415,10 +520,12 @@ export function NotesView({
   const handleBlockKeyDown = (block: NoteBlock, index: number, e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!activeNote) return;
 
-    // Escape closes slash menu
-    if (e.key === 'Escape' && slashBlockId === block.id) {
+    // Escape closes slash or wiki-link menu
+    if (e.key === 'Escape' && (slashBlockId === block.id || wikiLinkBlockId === block.id)) {
       e.preventDefault();
       setSlashBlockId(null);
+      setWikiLinkBlockId(null);
+      setWikiLinkQuery('');
       return;
     }
 
@@ -450,6 +557,17 @@ export function NotesView({
     // Enter creates next block (Shift+Enter inserts soft newline)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      // If wiki-link menu is open, insert the top matched note
+      if (wikiLinkBlockId === block.id) {
+        const wq = wikiLinkQuery.trim().toLowerCase();
+        const matchedNote = notes.find(
+          (n) => n.id !== activeNote.id && (!wq || n.title.toLowerCase().includes(wq))
+        );
+        if (matchedNote) {
+          handleInsertWikiLinkIntoBlock(block.id, matchedNote.title || 'Без названия');
+          return;
+        }
+      }
       // If slash menu is open and user presses Enter, pick the first matched option
       if (slashBlockId === block.id) {
         const query = block.content.slice(1).trim().toLowerCase();
@@ -721,6 +839,54 @@ export function NotesView({
             </div>
           </div>
 
+          {/* Mode Switcher (Editor vs Obsidian Graph) & Export All ZIP */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1 inline-flex p-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                data-testid="notes-mode-editor"
+                onClick={() => setNotebookTab('editor')}
+                className={`flex-1 min-h-[36px] px-2.5 py-1 rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors ${
+                  notebookTab === 'editor'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Заметки</span>
+              </button>
+              <button
+                type="button"
+                data-testid="notes-mode-graph"
+                onClick={() => {
+                  setNotebookTab('graph');
+                  setMobileScreen('editor');
+                }}
+                className={`flex-1 min-h-[36px] px-2.5 py-1 rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors ${
+                  notebookTab === 'graph'
+                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <GitFork className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Граф</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              data-testid="export-all-zip-button"
+              onClick={handleDownloadAllZip}
+              disabled={notes.length === 0}
+              title="Скачать все заметки в .ZIP с папками (.md)"
+              aria-label="Экспорт всех заметок в ZIP"
+              className="min-h-[38px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+            >
+              <Archive className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>.ZIP</span>
+            </button>
+          </div>
+
           {/* Search Bar */}
           <div className="relative">
             <Search
@@ -931,14 +1097,65 @@ export function NotesView({
         </div>
       </aside>
 
-      {/* RIGHT CANVAS: Notion-style Block Editor */}
+      {/* RIGHT CANVAS: Notion-style Block Editor or Obsidian Graph View */}
       <section
-        aria-label="Редактор заметки"
+        aria-label={notebookTab === 'graph' ? 'Граф связей заметок' : 'Редактор заметки'}
         className={`${
           mobileScreen === 'editor' ? 'flex' : 'hidden'
         } md:flex flex-1 flex-col min-w-0 bg-slate-50/40 dark:bg-slate-950 overflow-hidden`}
       >
-        {!activeNote ? (
+        {notebookTab === 'graph' ? (
+          <>
+            <header className="bg-white/95 dark:bg-slate-950/95 border-b border-slate-200 dark:border-slate-800 px-3 md:px-5 py-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setMobileScreen('sidebar')}
+                  className="md:hidden inline-flex items-center gap-1 px-2.5 min-h-[40px] rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-medium text-slate-700 dark:text-slate-200 shrink-0 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Папки</span>
+                </button>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <GitFork className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" aria-hidden="true" />
+                  <h2 className="font-display text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                    Граф знаний
+                  </h2>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  data-testid="export-all-zip-graph-button"
+                  onClick={handleDownloadAllZip}
+                  disabled={notes.length === 0}
+                  className="min-h-[38px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                >
+                  <Archive className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">Скачать .ZIP</span>
+                  <span className="sm:hidden">.ZIP</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="graph-back-to-editor"
+                  onClick={() => setNotebookTab('editor')}
+                  className="min-h-[38px] px-3 rounded-lg bg-slate-900 dark:bg-slate-100 hover:bg-slate-800 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                >
+                  <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Редактор</span>
+                </button>
+              </div>
+            </header>
+
+            <NotesGraphView
+              notes={notes}
+              folders={folders}
+              activeNoteId={activeNote?.id ?? null}
+              onOpenNote={(noteId) => handleOpenNote(noteId)}
+            />
+          </>
+        ) : !activeNote ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-4">
             <div className="w-12 h-12 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center text-slate-400">
               <FileText className="w-6 h-6" />
@@ -948,7 +1165,7 @@ export function NotesView({
                 Выберите или создайте заметку
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Организуйте страницы по папкам, собирайте чек-листы, списки, цитаты и заметки в одном месте.
+                Организуйте страницы по папкам, собирайте чек-листы, списки, цитаты и связывайте идеи на графе.
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-2">
@@ -974,7 +1191,7 @@ export function NotesView({
         ) : (
           <>
             {/* Top Editor Toolbar */}
-            <header className="sticky top-0 z-20 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-3 md:px-6 py-2 flex items-center justify-between gap-2">
+            <header className="sticky top-0 z-20 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-3 md:px-6 py-2 flex items-center justify-between gap-1.5">
               <div className="flex items-center gap-2 min-w-0">
                 <button
                   type="button"
@@ -996,7 +1213,7 @@ export function NotesView({
                     </span>
                   ))}
                   <span aria-hidden="true">/</span>
-                  <span className="truncate font-medium text-slate-900 dark:text-slate-100 max-w-[220px]">
+                  <span className="truncate font-medium text-slate-900 dark:text-slate-100 max-w-[200px]">
                     {activeNote.title || 'Без названия'}
                   </span>
                 </nav>
@@ -1018,7 +1235,7 @@ export function NotesView({
                       updatedAtMs: Date.now(),
                     }));
                   }}
-                  className="h-9 max-w-[130px] md:max-w-[170px] px-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-600 cursor-pointer"
+                  className="h-9 max-w-[100px] sm:max-w-[155px] px-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-600 cursor-pointer"
                 >
                   <option value="">Без папки</option>
                   {folders.map((f) => (
@@ -1027,6 +1244,35 @@ export function NotesView({
                     </option>
                   ))}
                 </select>
+
+                {/* Open Graph View */}
+                <button
+                  type="button"
+                  data-testid="toggle-graph-button"
+                  onClick={() => {
+                    setNotebookTab('graph');
+                    setMobileScreen('editor');
+                  }}
+                  title="Открыть граф связей (Obsidian Graph)"
+                  aria-label="Граф связей"
+                  className="min-h-[36px] min-w-[36px] px-2 sm:px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 inline-flex items-center justify-center gap-1.5 text-xs font-medium whitespace-nowrap cursor-pointer transition-colors"
+                >
+                  <GitFork className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                  <span className="hidden lg:inline">Граф</span>
+                </button>
+
+                {/* Download Note as .MD */}
+                <button
+                  type="button"
+                  data-testid="export-note-md-button"
+                  onClick={handleDownloadActiveNoteMarkdown}
+                  title="Скачать текущую заметку в формате Markdown (.md)"
+                  aria-label="Скачать .md"
+                  className="min-h-[36px] px-2 sm:px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 inline-flex items-center justify-center gap-1 text-xs font-medium whitespace-nowrap cursor-pointer transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>.MD</span>
+                </button>
 
                 {/* Pin / Favorite Toggle */}
                 <button
@@ -1041,7 +1287,7 @@ export function NotesView({
                   aria-pressed={activeNote.pinned}
                   title={activeNote.pinned ? 'Убрать из избранного' : 'В избранное'}
                   aria-label={activeNote.pinned ? 'Убрать из избранного' : 'В избранное'}
-                  className={`min-h-[36px] min-w-[36px] px-2.5 rounded-lg border inline-flex items-center justify-center gap-1 text-xs font-medium transition-colors cursor-pointer ${
+                  className={`min-h-[36px] min-w-[36px] px-2 rounded-lg border inline-flex items-center justify-center gap-1 text-xs font-medium transition-colors cursor-pointer ${
                     activeNote.pinned
                       ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
                       : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -1051,7 +1297,7 @@ export function NotesView({
                     className={`w-3.5 h-3.5 ${activeNote.pinned ? 'fill-amber-500 text-amber-500' : ''}`}
                     aria-hidden="true"
                   />
-                  <span className="hidden lg:inline">Избранное</span>
+                  <span className="hidden xl:inline">Избранное</span>
                 </button>
 
                 {/* Delete Note (2-step inline safety) */}
@@ -1436,6 +1682,56 @@ export function NotesView({
                           </div>
                         )}
 
+                        {/* [[Wiki-Link]] Autocomplete Palette */}
+                        {wikiLinkBlockId === block.id && (
+                          <div
+                            data-testid="wikilink-autocomplete-menu"
+                            className="mt-1 ml-8 w-80 max-w-[calc(100%-2rem)] rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-lg p-1.5 z-30 relative"
+                          >
+                            <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center justify-between">
+                              <span>Связать с заметкой [[...]]</span>
+                              {wikiLinkQuery && <span className="font-mono normal-case">{wikiLinkQuery}</span>}
+                            </div>
+                            <div className="max-h-52 overflow-y-auto space-y-0.5">
+                              {(() => {
+                                const q = wikiLinkQuery.trim().toLowerCase();
+                                const candidates = notes.filter(
+                                  (n) =>
+                                    n.id !== activeNote.id &&
+                                    (!q || n.title.toLowerCase().includes(q))
+                                );
+                                if (candidates.length === 0) {
+                                  return (
+                                    <div className="px-2.5 py-2 text-xs text-slate-400">
+                                      Нет подходящих заметок
+                                    </div>
+                                  );
+                                }
+                                return candidates.map((cand) => (
+                                  <button
+                                    key={`wl-${cand.id}`}
+                                    type="button"
+                                    onClick={() =>
+                                      handleInsertWikiLinkIntoBlock(
+                                        block.id,
+                                        cand.title || 'Без названия'
+                                      )
+                                    }
+                                    className="w-full px-2.5 py-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/50 flex items-center gap-2 text-left cursor-pointer transition-colors"
+                                  >
+                                    <span className="text-sm shrink-0" aria-hidden="true">
+                                      {cand.icon || '📝'}
+                                    </span>
+                                    <span className="text-xs font-medium text-slate-800 dark:text-slate-100 truncate">
+                                      {cand.title || 'Без названия'}
+                                    </span>
+                                  </button>
+                                ));
+                              })()}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Per-Block Context / Transform Menu */}
                         {isTypeMenuOpen && (
                           <div className="mt-1 ml-8 w-72 max-w-[calc(100%-2rem)] rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-lg p-2 z-30 relative space-y-2">
@@ -1545,6 +1841,102 @@ export function NotesView({
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Outgoing Links & Backlinks Section */}
+                <div
+                  data-testid="note-links-section"
+                  className="pt-4 border-t border-slate-200/80 dark:border-slate-800/80 space-y-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      <Link2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                      <span>Ссылки и упоминания</span>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="insert-wikilink-button"
+                      onClick={() => setShowInsertLinkPicker((v) => !v)}
+                      className="min-h-[34px] px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-blue-500 text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <span className="font-mono text-blue-600 dark:text-blue-400">[[</span>
+                      <span>Связать заметку</span>
+                    </button>
+                  </div>
+
+                  {showInsertLinkPicker && (
+                    <div
+                      data-testid="insert-wikilink-picker"
+                      className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5"
+                    >
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 px-1">
+                        Выберите страницу для вставки [[ссылки]]:
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {notes
+                          .filter((n) => n.id !== activeNote.id)
+                          .map((target) => (
+                            <button
+                              key={`pick-${target.id}`}
+                              type="button"
+                              onClick={() => handleQuickInsertLink(target)}
+                              className="min-h-[34px] px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/60 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 inline-flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <span>{target.icon || '📝'}</span>
+                              <span className="truncate max-w-[200px]">{target.title || 'Без названия'}</span>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeOutgoing.length === 0 && activeBacklinks.length === 0 ? (
+                    <p className="text-xs text-slate-400 dark:text-slate-500">
+                      Введите <span className="font-mono">[[</span> в тексте блока или нажмите «Связать заметку», чтобы соединить страницы на графе.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {activeOutgoing.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 mr-1">
+                            Исходящие ({activeOutgoing.length}):
+                          </span>
+                          {activeOutgoing.map((target) => (
+                            <button
+                              key={`out-${target.id}`}
+                              type="button"
+                              data-testid={`outgoing-link-${target.id}`}
+                              onClick={() => handleOpenNote(target.id)}
+                              className="min-h-[34px] px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-500 text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                              <span>{target.icon || '📝'}</span>
+                              <span>{target.title || 'Без названия'}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {activeBacklinks.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 mr-1">
+                            Упоминают эту страницу ({activeBacklinks.length}):
+                          </span>
+                          {activeBacklinks.map((source) => (
+                            <button
+                              key={`back-${source.id}`}
+                              type="button"
+                              data-testid={`backlink-${source.id}`}
+                              onClick={() => handleOpenNote(source.id)}
+                              className="min-h-[34px] px-2.5 py-1 rounded-lg bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/70 hover:border-blue-500 text-xs font-medium text-blue-700 dark:text-blue-300 inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                              <span>{source.icon || '📝'}</span>
+                              <span>{source.title || 'Без названия'}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Quick Add Block Bar (works effortlessly on desktop and mobile touch) */}

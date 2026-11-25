@@ -30,15 +30,21 @@ import {
   toggleOrIncrementHabitDay,
 } from './habitLogic';
 import {
+  buildNotesZipBlob,
   computeNumberedListIndices,
   createNoteBlock,
+  createNotePage,
   detectMarkdownBlockShortcut,
+  extractWikiLinks,
   filterNotesByQuery,
   getChecklistStats,
   getDescendantFolderIds,
   insertBlockAfter,
   moveBlockByOffset,
+  noteToMarkdown,
   removeFolderAndPromoteChildren,
+  resolveNoteLinks,
+  sanitizeMarkdownFilename,
 } from './notesLogic';
 
 const makeCard = (overrides: Partial<CardItem> = {}): CardItem => ({
@@ -350,4 +356,78 @@ test('notesLogic filters notes across titles/folders/blocks and promotes childre
   assert.equal(promoted.folders.some((f) => f.id === 'folder-projects'), false);
   assert.equal(promoted.folders.find((f) => f.id === 'folder-sub')?.parentId, null);
   assert.equal(promoted.notes.find((n) => n.id === 'note-roadmap')?.folderId, null);
+});
+
+test('notesLogic resolves wiki-links, deduplicates targets, and builds backlinks', () => {
+  const n1 = createNotePage({
+    title: 'Карта целей',
+    blocks: [
+      createNoteBlock('paragraph', 'Смотри [[План на неделю|План]] и [[карту целей]] (self).'),
+      createNoteBlock('paragraph', 'Повторная ссылка [[План на неделю]] и [[Несуществующая]]'),
+    ],
+  });
+  const n2 = createNotePage({
+    title: 'План на неделю',
+    blocks: [createNoteBlock('todo', 'Подвести итоги [[Карта целей]]', { checked: false })],
+  });
+
+  assert.deepEqual(extractWikiLinks(n1), ['План на неделю', 'карту целей', 'Несуществующая']);
+
+  const { outgoingById, backlinksById, linkEdges } = resolveNoteLinks([n1, n2]);
+  assert.deepEqual(outgoingById.get(n1.id)?.map((n) => n.id), [n2.id]);
+  assert.deepEqual(backlinksById.get(n2.id)?.map((n) => n.id), [n1.id]);
+  assert.deepEqual(backlinksById.get(n1.id)?.map((n) => n.id), [n2.id]);
+  assert.equal(linkEdges.length, 2);
+});
+
+test('notesLogic exports Obsidian-compatible Markdown and valid ZIP archive', async () => {
+  assert.equal(sanitizeMarkdownFilename('План: Q4 / 2026?*'), 'План Q4 2026.md');
+  assert.equal(sanitizeMarkdownFilename('...'), 'note.md');
+
+  const note = createNotePage({
+    title: 'Конспект',
+    pinned: true,
+    blocks: [
+      createNoteBlock('heading2', 'Идеи'),
+      createNoteBlock('todo', 'Сделать экспорт', { checked: true }),
+      createNoteBlock('todo', 'Проверить граф', { checked: false, indent: 1 }),
+      createNoteBlock('callout', 'Важный фокус\nСтрока 2'),
+      createNoteBlock('code', 'const x = 1;'),
+      createNoteBlock('divider', ''),
+      createNoteBlock('paragraph', 'Связь: [[Дорожная карта]]'),
+    ],
+  });
+
+  const md = noteToMarkdown(note, 'Работа/Проекты');
+  assert.ok(md.startsWith('---\ntitle: "Конспект"\nfolder: "Работа/Проекты"\npinned: true\n'));
+  assert.ok(md.includes('## Идеи'));
+  assert.ok(md.includes('- [x] Сделать экспорт'));
+  assert.ok(md.includes('  - [ ] Проверить граф'));
+  assert.ok(md.includes('> [!note]\n> Важный фокус\n> Строка 2'));
+  assert.ok(md.includes('```\nconst x = 1;\n```'));
+  assert.ok(md.includes('[[Дорожная карта]]'));
+
+  const folders = createInitialNoteFolders();
+  const seedNotes = createInitialNotes(1_700_000_000_000);
+  // Duplicate title to verify disambiguation in ZIP
+  const dupNote = createNotePage({
+    title: seedNotes[0].title,
+    folderId: seedNotes[0].folderId,
+    blocks: [createNoteBlock('paragraph', 'Дубликат названия')],
+  });
+
+  const zipBlob = buildNotesZipBlob([...seedNotes, dupNote], folders);
+  assert.ok(zipBlob.size > 200);
+  const bytes = new Uint8Array(await zipBlob.arrayBuffer());
+  // Local file header signature PK\x03\x04
+  assert.equal(bytes[0], 0x50);
+  assert.equal(bytes[1], 0x4b);
+  assert.equal(bytes[2], 0x03);
+  assert.equal(bytes[3], 0x04);
+  // End of central directory signature PK\x05\x06 at bytes.length - 22
+  const eocdOffset = bytes.length - 22;
+  assert.equal(bytes[eocdOffset], 0x50);
+  assert.equal(bytes[eocdOffset + 1], 0x4b);
+  assert.equal(bytes[eocdOffset + 2], 0x05);
+  assert.equal(bytes[eocdOffset + 3], 0x06);
 });

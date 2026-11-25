@@ -1,6 +1,6 @@
 {
-  "name": "PlanGrid",
-  "description": "Аналог Trello с календарным и таймлайн-планированием как в Planyway и интеграцией с Google Calendar.",
+  "name": "RST",
+  "description": "Персональный супер-апп (заметки, планировщик, привычки, финансы, спорт) с интеграцией Google Calendar.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

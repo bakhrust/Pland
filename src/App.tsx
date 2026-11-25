@@ -1248,7 +1248,7 @@ export default function App() {
       type: 'delete',
       title: 'Удалить событие из Google Calendar?',
       description:
-        'Событие будет удалено из вашего Google Календаря. Карточка на доске PLAND сохранится.',
+        'Событие будет удалено из вашего Google Календаря. Карточка на доске RST сохранится.',
       calendarId: calId,
       calendarName: calName,
       card,
@@ -1468,7 +1468,7 @@ export default function App() {
   if ((!isAuthChecked || (googleUser && isWorkspaceSyncing && loadedUidRef.current !== googleUser.uid)) && !isOfflineOrGuest) {
     return (
       <div className="h-dvh w-full bg-slate-50 flex items-center justify-center text-slate-500 text-xs font-medium">
-        Загрузка PLAND...
+        Загрузка RST...
       </div>
     );
   }

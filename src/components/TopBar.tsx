@@ -65,7 +65,7 @@ export function TopBar({
         }}
         className="font-display text-base md:text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-blue-600 rounded"
       >
-        PLAND
+        RST
       </a>
 
       {/* Zone 2: Desktop 5 main super-app modules */}
@@ -135,7 +135,7 @@ export function TopBar({
           <button
             type="button"
             onClick={onLogout}
-            aria-label="Выйти из аккаунта PLAND"
+            aria-label="Выйти из аккаунта RST"
             title={googleUserEmail ? `Выйти (${googleUserEmail})` : 'Выйти'}
             className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer shrink-0"
           >

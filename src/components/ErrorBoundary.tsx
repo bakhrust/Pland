@@ -33,7 +33,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('PLAND ErrorBoundary caught error:', error, info);
+    console.error('RST ErrorBoundary caught error:', error, info);
   }
 
   render() {

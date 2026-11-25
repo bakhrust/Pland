@@ -136,7 +136,7 @@ export function createInitialBoardState(referenceDate = new Date()): BoardState 
         id: 'card-8',
         listId: 'list-done',
         order: 0,
-        title: 'Утверждение палитры и типографики PLAND',
+        title: 'Утверждение палитры и типографики RST',
         description: 'Финальный выбор шрифтов Plus Jakarta Sans и DM Sans, настройка светлой темы.',
         labelIds: ['lbl-design'],
         checklist: [
@@ -331,7 +331,7 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
         {
           id: 'blk-w-5',
           type: 'todo',
-          content: 'Искать по всем страницам, скачивать в .md и смотреть [[Дорожная карта супер-приложения PLAND]] на графе связей',
+          content: 'Искать по всем страницам, скачивать в .md и смотреть [[Дорожная карта супер-приложения RST]] на графе связей',
           checked: false,
           indent: 0,
         },
@@ -347,7 +347,7 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
     {
       id: 'note-roadmap',
       folderId: 'folder-projects',
-      title: 'Дорожная карта супер-приложения PLAND',
+      title: 'Дорожная карта супер-приложения RST',
       icon: '🚀',
       pinned: true,
       order: 1,
@@ -423,7 +423,7 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
         {
           id: 'blk-i-2',
           type: 'bullet',
-          content: 'Главная задача утра — без отвлечений и мессенджеров (сверяться с [[Дорожная карта супер-приложения PLAND]])',
+          content: 'Главная задача утра — без отвлечений и мессенджеров (сверяться с [[Дорожная карта супер-приложения RST]])',
           checked: false,
           indent: 0,
         },

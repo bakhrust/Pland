@@ -1,0 +1,6 @@
+{
+  "name": "PlanGrid",
+  "description": "Аналог Trello с календарным и таймлайн-планированием как в Planyway и интеграцией с Google Calendar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

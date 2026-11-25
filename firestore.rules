@@ -1,0 +1,379 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------- Global Security Primitives ----------
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOptionalBoundedString(val, maxLen) {
+      return val == null || (val is string && val.size() <= maxLen);
+    }
+
+    function isValidColor(color) {
+      return color is string && color in ['blue', 'emerald', 'violet', 'amber', 'rose'];
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // ---------- Entity Validation Blueprints ----------
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'ownerUid',
+          'email',
+          'displayName',
+          'activeBoardId',
+          'visibleCalendarIds',
+          'targetCalendarId',
+          'theme',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid',
+          'email',
+          'displayName',
+          'activeBoardId',
+          'visibleCalendarIds',
+          'targetCalendarId',
+          'theme',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.email is string && data.email.size() <= 254
+        && data.displayName is string && data.displayName.size() <= 120
+        && isValidId(data.activeBoardId)
+        && data.visibleCalendarIds is list && data.visibleCalendarIds.size() <= 30
+        && (data.visibleCalendarIds.size() == 0 || (data.visibleCalendarIds[0] is string && data.visibleCalendarIds[0].size() <= 254))
+        && data.targetCalendarId is string && data.targetCalendarId.size() >= 1 && data.targetCalendarId.size() <= 254
+        && data.theme is string && data.theme in ['light', 'dark']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBoardDoc(data, userId, boardId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'title',
+          'color',
+          'order',
+          'labels',
+          'lists',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'title',
+          'color',
+          'order',
+          'labels',
+          'lists',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == boardId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && isValidColor(data.color)
+        && data.order is number && data.order >= 0 && data.order <= 1000
+        && data.labels is list && data.labels.size() <= 30
+        && (data.labels.size() == 0 || (
+          data.labels[0] is map
+          && data.labels[0].keys().hasAll(['id', 'name', 'color'])
+          && data.labels[0].keys().hasOnly(['id', 'name', 'color'])
+          && isValidId(data.labels[0].id)
+          && data.labels[0].name is string && data.labels[0].name.size() <= 60
+          && isValidColor(data.labels[0].color)
+        ))
+        && data.lists is list && data.lists.size() >= 1 && data.lists.size() <= 30
+        && (data.lists[0] is map
+          && data.lists[0].keys().hasAll(['id', 'title', 'order'])
+          && data.lists[0].keys().hasOnly(['id', 'title', 'order'])
+          && isValidId(data.lists[0].id)
+          && data.lists[0].title is string && data.lists[0].title.size() >= 1 && data.lists[0].title.size() <= 80
+          && data.lists[0].order is number && data.lists[0].order >= 0 && data.lists[0].order <= 100
+        )
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCardDoc(data, userId, boardId, cardId) {
+      return data.keys().hasAll([
+          'id',
+          'boardId',
+          'ownerUid',
+          'listId',
+          'order',
+          'title',
+          'description',
+          'labelIds',
+          'checklist',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'boardId',
+          'ownerUid',
+          'listId',
+          'order',
+          'title',
+          'description',
+          'labelIds',
+          'checklist',
+          'startDate',
+          'endDate',
+          'allDay',
+          'dueDate',
+          'googleEventId',
+          'googleCalendarId',
+          'lastSyncedAt',
+          'syncDirty',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == cardId
+        && isValidId(data.boardId) && data.boardId == boardId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && isValidId(data.listId)
+        && data.order is number && data.order >= 0 && data.order <= 10000
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.description is string && data.description.size() <= 5000
+        && data.labelIds is list && data.labelIds.size() <= 20
+        && (data.labelIds.size() == 0 || isValidId(data.labelIds[0]))
+        && data.checklist is list && data.checklist.size() <= 50
+        && (data.checklist.size() == 0 || (
+          data.checklist[0] is map
+          && data.checklist[0].keys().hasAll(['id', 'text', 'done'])
+          && data.checklist[0].keys().hasOnly(['id', 'text', 'done'])
+          && isValidId(data.checklist[0].id)
+          && data.checklist[0].text is string && data.checklist[0].text.size() <= 200
+          && data.checklist[0].done is bool
+        ))
+        && (!('startDate' in data) || isOptionalBoundedString(data.startDate, 64))
+        && (!('endDate' in data) || isOptionalBoundedString(data.endDate, 64))
+        && (!('allDay' in data) || data.allDay == null || data.allDay is bool)
+        && (!('dueDate' in data) || isOptionalBoundedString(data.dueDate, 64))
+        && (!('googleEventId' in data) || isOptionalBoundedString(data.googleEventId, 256))
+        && (!('googleCalendarId' in data) || isOptionalBoundedString(data.googleCalendarId, 256))
+        && (!('lastSyncedAt' in data) || isOptionalBoundedString(data.lastSyncedAt, 64))
+        && (!('syncDirty' in data) || data.syncDirty == null || data.syncDirty is bool)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidHabitDoc(data, userId, habitId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'title',
+          'color',
+          'daysOfWeek',
+          'targetCount',
+          'unit',
+          'order',
+          'completions',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'title',
+          'color',
+          'daysOfWeek',
+          'targetCount',
+          'unit',
+          'order',
+          'completions',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == habitId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && isValidColor(data.color)
+        && data.daysOfWeek is list
+        && data.daysOfWeek.size() >= 1 && data.daysOfWeek.size() <= 7
+        && data.daysOfWeek[0] is int && data.daysOfWeek[0] >= 1 && data.daysOfWeek[0] <= 7
+        && data.targetCount is int && data.targetCount >= 1 && data.targetCount <= 100
+        && data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 24
+        && data.order is number && data.order >= 0 && data.order <= 1000
+        && data.completions is map && data.completions.size() <= 730
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ---------- Collection Rules ----------
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['activeBoardId', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['visibleCalendarIds', 'targetCalendarId', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'activeBoardId', 'visibleCalendarIds', 'targetCalendarId', 'theme', 'updatedAt'])
+        );
+
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      match /boards/{boardId} {
+        allow get: if isValidId(userId) && isValidId(boardId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(boardId)
+          && isOwner(userId)
+          && isValidBoardDoc(incoming(), userId, boardId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(boardId)
+          && isOwner(userId)
+          && isValidBoardDoc(incoming(), userId, boardId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['lists', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['labels', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'color', 'order', 'labels', 'lists', 'updatedAt'])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(boardId) && isOwner(userId);
+
+        match /cards/{cardId} {
+          allow get: if isValidId(userId) && isValidId(boardId) && isValidId(cardId) && isOwner(userId);
+          allow list: if isValidId(userId) && isValidId(boardId) && isOwner(userId)
+            && existing().ownerUid == request.auth.uid
+            && existing().boardId == boardId;
+
+          allow create: if isValidId(userId)
+            && isValidId(boardId)
+            && isValidId(cardId)
+            && isOwner(userId)
+            && isValidCardDoc(incoming(), userId, boardId, cardId)
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && exists(/databases/$(database)/documents/users/$(userId)/boards/$(boardId))
+            && get(/databases/$(database)/documents/users/$(userId)/boards/$(boardId)).data.ownerUid == request.auth.uid;
+
+          allow update: if isValidId(userId)
+            && isValidId(boardId)
+            && isValidId(cardId)
+            && isOwner(userId)
+            && isValidCardDoc(incoming(), userId, boardId, cardId)
+            && incoming().id == existing().id
+            && incoming().boardId == existing().boardId
+            && incoming().ownerUid == existing().ownerUid
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && (
+              incoming().diff(existing()).affectedKeys().hasOnly(['listId', 'order', 'updatedAt']) ||
+              incoming().diff(existing()).affectedKeys().hasOnly(['startDate', 'endDate', 'allDay', 'syncDirty', 'updatedAt']) ||
+              incoming().diff(existing()).affectedKeys().hasOnly(['googleEventId', 'googleCalendarId', 'lastSyncedAt', 'syncDirty', 'updatedAt']) ||
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'listId',
+                'order',
+                'title',
+                'description',
+                'labelIds',
+                'checklist',
+                'startDate',
+                'endDate',
+                'allDay',
+                'dueDate',
+                'googleEventId',
+                'googleCalendarId',
+                'lastSyncedAt',
+                'syncDirty',
+                'updatedAt'
+              ])
+            );
+
+          allow delete: if isValidId(userId) && isValidId(boardId) && isValidId(cardId) && isOwner(userId);
+        }
+      }
+
+      match /habits/{habitId} {
+        allow get: if isValidId(userId) && isValidId(habitId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(habitId)
+          && isOwner(userId)
+          && isValidHabitDoc(incoming(), userId, habitId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(habitId)
+          && isOwner(userId)
+          && isValidHabitDoc(incoming(), userId, habitId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['completions', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'color',
+              'daysOfWeek',
+              'targetCount',
+              'unit',
+              'order',
+              'completions',
+              'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(habitId) && isOwner(userId);
+      }
+    }
+  }
+}

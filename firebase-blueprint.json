@@ -1,0 +1,310 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private workspace settings and active board pointer for an authenticated PLAND user.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "activeBoardId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "visibleCalendarIds": {
+          "type": "array",
+          "description": "Up to 30 selected Google Calendar IDs."
+        },
+        "targetCalendarId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 254
+        },
+        "theme": {
+          "type": "string",
+          "enum": ["light", "dark"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerUid",
+        "email",
+        "displayName",
+        "activeBoardId",
+        "visibleCalendarIds",
+        "targetCalendarId",
+        "theme",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BoardDoc": {
+      "title": "BoardDoc",
+      "description": "A single personal Kanban/planner board owned by a user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "color": {
+          "type": "string",
+          "enum": ["blue", "emerald", "violet", "amber", "rose"]
+        },
+        "order": {
+          "type": "number"
+        },
+        "labels": {
+          "type": "array",
+          "description": "Board labels (max 30)."
+        },
+        "lists": {
+          "type": "array",
+          "description": "Board columns (max 30)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "title",
+        "color",
+        "order",
+        "labels",
+        "lists",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CardDoc": {
+      "title": "CardDoc",
+      "description": "A task card belonging to a specific user board.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "boardId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "listId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "order": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "labelIds": {
+          "type": "array",
+          "description": "Attached label IDs (max 20)."
+        },
+        "checklist": {
+          "type": "array",
+          "description": "Checklist items (max 50)."
+        },
+        "startDate": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "endDate": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "allDay": {
+          "type": "boolean"
+        },
+        "dueDate": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "googleEventId": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "googleCalendarId": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "lastSyncedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "syncDirty": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "boardId",
+        "ownerUid",
+        "listId",
+        "order",
+        "title",
+        "description",
+        "labelIds",
+        "checklist",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "HabitDoc": {
+      "title": "HabitDoc",
+      "description": "A daily or weekly recurring personal habit owned by a user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "color": {
+          "type": "string",
+          "enum": ["blue", "emerald", "violet", "amber", "rose"]
+        },
+        "daysOfWeek": {
+          "type": "array",
+          "description": "ISO weekdays 1..7 when the habit is scheduled."
+        },
+        "targetCount": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "order": {
+          "type": "number"
+        },
+        "completions": {
+          "type": "object",
+          "description": "Map of YYYY-MM-DD date keys to completion counts (max 730 entries)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "title",
+        "color",
+        "daysOfWeek",
+        "targetCount",
+        "unit",
+        "order",
+        "completions",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private profile and workspace settings strictly isolated per authenticated owner."
+    },
+    "/users/{userId}/boards/{boardId}": {
+      "schema": { "$ref": "#/entities/BoardDoc" },
+      "description": "User-owned boards with bounded labels and column definitions."
+    },
+    "/users/{userId}/boards/{boardId}/cards/{cardId}": {
+      "schema": { "$ref": "#/entities/CardDoc" },
+      "description": "Task cards inside a user board, verified against parent board existence and ownership."
+    },
+    "/users/{userId}/habits/{habitId}": {
+      "schema": { "$ref": "#/entities/HabitDoc" },
+      "description": "User-owned recurring habits with bounded weekday schedules and daily completion logs."
+    }
+  }
+}

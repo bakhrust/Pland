@@ -33,7 +33,7 @@ export function PlannerBacklogSidebar({
   return (
     <aside
       aria-label="Задачи доски для планирования"
-      className="fixed inset-x-0 top-12 bottom-14 z-30 md:static md:inset-auto md:w-72 md:shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden"
+      className="fixed inset-x-0 top-12 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 md:static md:inset-auto md:w-72 md:shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden"
     >
       <div className="p-3 border-b border-slate-200 space-y-2.5 shrink-0">
         <div className="flex items-center justify-between gap-2">

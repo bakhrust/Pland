@@ -143,7 +143,7 @@ export function MobileBottomNav({ viewMode, onChangeView }: MobileBottomNavProps
   return (
     <nav
       aria-label="Мобильная навигация"
-      className="md:hidden h-14 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 shrink-0 z-20"
+      className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_rgba(15,23,42,0.06)] dark:shadow-[0_-4px_16px_rgba(0,0,0,0.3)]"
     >
       {VIEW_ITEMS.map(({ id, label, Icon }) => {
         const active = viewMode === id;
@@ -153,7 +153,7 @@ export function MobileBottomNav({ viewMode, onChangeView }: MobileBottomNavProps
             type="button"
             onClick={() => onChangeView(id)}
             aria-current={active ? 'page' : undefined}
-            className={`flex flex-col items-center justify-center gap-0.5 px-0.5 text-[10px] font-medium transition-colors cursor-pointer min-w-0 ${
+            className={`h-14 flex flex-col items-center justify-center gap-0.5 px-0.5 text-[10px] font-medium transition-colors cursor-pointer min-w-0 ${
               active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >

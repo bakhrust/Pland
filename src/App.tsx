@@ -1233,7 +1233,7 @@ export default function App() {
 
   if ((!isAuthChecked || (googleUser && isWorkspaceSyncing && loadedUidRef.current !== googleUser.uid)) && !isOfflineOrGuest) {
     return (
-      <div className="h-screen w-screen bg-slate-50 flex items-center justify-center text-slate-500 text-xs font-medium">
+      <div className="h-dvh w-full bg-slate-50 flex items-center justify-center text-slate-500 text-xs font-medium">
         Загрузка PLAND...
       </div>
     );
@@ -1251,7 +1251,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
+    <div className="h-dvh w-full flex flex-col overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
       <TopBar
         viewMode={viewMode}
         onChangeView={handleChangeViewMode}
@@ -1312,7 +1312,7 @@ export default function App() {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 flex overflow-hidden relative">
+      <main className="flex-1 flex overflow-hidden relative pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
         <Suspense
           fallback={
             <div className="flex-1 flex items-center justify-center text-xs text-slate-400 dark:text-slate-500">
@@ -1476,7 +1476,7 @@ export default function App() {
         {notice && (
           <div
             role="status"
-            className={`fixed bottom-16 md:bottom-5 right-3 md:right-5 left-3 md:left-auto z-50 px-4 py-2.5 rounded-lg border shadow-md text-xs font-medium flex items-center justify-center md:justify-start gap-2 ${
+            className={`fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] md:bottom-5 right-3 md:right-5 left-3 md:left-auto z-50 px-4 py-2.5 rounded-lg border shadow-md text-xs font-medium flex items-center justify-center md:justify-start gap-2 ${
               notice.kind === 'error'
                 ? 'bg-rose-50 text-rose-800 border-rose-200'
                 : 'bg-slate-900 text-white border-slate-800'

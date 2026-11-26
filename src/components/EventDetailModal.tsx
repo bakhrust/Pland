@@ -1,24 +1,37 @@
 import { Calendar, ExternalLink, MapPin, PlusCircle, Video, X } from 'lucide-react';
-import type { BoardList, GoogleCalendarEvent } from '../types/planner';
+import { useEffect, useState } from 'react';
+import type { BoardList, BoardRecord, GoogleCalendarEvent } from '../types/planner';
 import { formatRussianShortDate, formatTimeHHMM, parseFlexibleDate } from '../utils/dateUtils';
 import { safeExternalUrl } from '../utils/urlSafety';
 
 interface EventDetailModalProps {
   event: GoogleCalendarEvent | null;
   lists: BoardList[];
+  boards?: BoardRecord[];
+  initialBoardId?: string;
   onClose: () => void;
-  onImportAsCard: (event: GoogleCalendarEvent, listId: string) => void;
+  onImportAsCard: (event: GoogleCalendarEvent, listId: string, boardId?: string) => void;
 }
 
 export function EventDetailModal({
   event,
   lists,
+  boards = [],
+  initialBoardId,
   onClose,
   onImportAsCard,
 }: EventDetailModalProps) {
+  const [targetBoardId, setTargetBoardId] = useState(initialBoardId ?? boards[0]?.id ?? '');
+
+  useEffect(() => {
+    setTargetBoardId(initialBoardId ?? boards[0]?.id ?? '');
+  }, [initialBoardId, boards, event]);
+
   if (!event) return null;
 
-  const sortedLists = [...lists].sort((a, b) => a.order - b.order);
+  const selectedBoard = boards.find((b) => b.id === targetBoardId);
+  const activeLists = selectedBoard ? selectedBoard.state.lists : lists;
+  const sortedLists = [...activeLists].sort((a, b) => a.order - b.order);
   const defaultListId = sortedLists[0]?.id || '';
   const startDate = parseFlexibleDate(event.start);
   const safeHangoutUrl = safeExternalUrl(event.hangoutLink);
@@ -110,7 +123,7 @@ export function EventDetailModal({
           )}
         </div>
 
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
             onClick={onClose}
@@ -119,16 +132,33 @@ export function EventDetailModal({
             Закрыть
           </button>
 
-          {defaultListId && (
-            <button
-              type="button"
-              onClick={() => onImportAsCard(event, defaultListId)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 cursor-pointer"
-            >
-              <PlusCircle className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Создать карточку на доске</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2 ml-auto">
+            {boards.length > 1 && (
+              <select
+                aria-label="Доска для импорта"
+                value={targetBoardId}
+                onChange={(e) => setTargetBoardId(e.target.value)}
+                className="px-2.5 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-600 cursor-pointer"
+              >
+                {boards.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.title}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {defaultListId && (
+              <button
+                type="button"
+                onClick={() => onImportAsCard(event, defaultListId, selectedBoard?.id)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 cursor-pointer"
+              >
+                <PlusCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Создать карточку на доске</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

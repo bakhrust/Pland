@@ -1,5 +1,14 @@
-import type { BoardState, NoteFolder, NotePage, WorkspaceData } from '../types/planner';
-import { addDays, getWeekStartMonday, toLocalDateKey } from '../utils/dateUtils';
+import type {
+  BoardState,
+  FinanceAccount,
+  FinanceCategory,
+  FinanceGoal,
+  FinanceTransaction,
+  NoteFolder,
+  NotePage,
+  WorkspaceData,
+} from '../types/planner';
+import { addDays, getWeekStartMonday, pad2, toLocalDateKey } from '../utils/dateUtils';
 
 export function createInitialBoardState(referenceDate = new Date()): BoardState {
   const monday = getWeekStartMonday(referenceDate);
@@ -445,4 +454,311 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
     },
   ];
 }
+
+export function createInitialFinanceAccounts(): FinanceAccount[] {
+  return [
+    {
+      id: 'acc-main-card',
+      title: 'Основная карта',
+      type: 'card',
+      initialBalance: 85000,
+      color: 'blue',
+      order: 0,
+    },
+    {
+      id: 'acc-cash',
+      title: 'Наличные',
+      type: 'cash',
+      initialBalance: 14000,
+      color: 'emerald',
+      order: 1,
+    },
+    {
+      id: 'acc-reserve',
+      title: 'Накопительный счёт',
+      type: 'savings',
+      initialBalance: 240000,
+      color: 'violet',
+      order: 2,
+    },
+  ];
+}
+
+export function createInitialFinanceCategories(): FinanceCategory[] {
+  return [
+    {
+      id: 'fcat-groceries',
+      name: 'Продукты',
+      kind: 'expense',
+      monthlyLimit: 32000,
+      color: 'emerald',
+      order: 0,
+    },
+    {
+      id: 'fcat-housing',
+      name: 'Жильё и ЖКУ',
+      kind: 'expense',
+      monthlyLimit: 45000,
+      color: 'blue',
+      order: 1,
+    },
+    {
+      id: 'fcat-cafe',
+      name: 'Кафе и доставка',
+      kind: 'expense',
+      monthlyLimit: 14000,
+      color: 'rose',
+      order: 2,
+    },
+    {
+      id: 'fcat-transport',
+      name: 'Транспорт и такси',
+      kind: 'expense',
+      monthlyLimit: 10000,
+      color: 'amber',
+      order: 3,
+    },
+    {
+      id: 'fcat-subscriptions',
+      name: 'Подписки и связь',
+      kind: 'expense',
+      monthlyLimit: 4500,
+      color: 'violet',
+      order: 4,
+    },
+    {
+      id: 'fcat-health',
+      name: 'Здоровье и спорт',
+      kind: 'expense',
+      monthlyLimit: 12000,
+      color: 'emerald',
+      order: 5,
+    },
+    {
+      id: 'fcat-shopping',
+      name: 'Покупки и дом',
+      kind: 'expense',
+      monthlyLimit: 15000,
+      color: 'blue',
+      order: 6,
+    },
+    {
+      id: 'fcat-salary',
+      name: 'Зарплата',
+      kind: 'income',
+      monthlyLimit: null,
+      color: 'emerald',
+      order: 7,
+    },
+    {
+      id: 'fcat-freelance',
+      name: 'Проекты и бонусы',
+      kind: 'income',
+      monthlyLimit: null,
+      color: 'blue',
+      order: 8,
+    },
+  ];
+}
+
+function monthDayKey(year: number, monthZeroIdx: number, day: number): string {
+  const maxDay = new Date(year, monthZeroIdx + 1, 0).getDate();
+  const safeDay = Math.max(1, Math.min(maxDay, day));
+  return `${year}-${pad2(monthZeroIdx + 1)}-${pad2(safeDay)}`;
+}
+
+export function createInitialFinanceTransactions(referenceDate = new Date()): FinanceTransaction[] {
+  const year = referenceDate.getFullYear();
+  const monthIdx = referenceDate.getMonth();
+  const prevDate = new Date(year, monthIdx - 1, 1);
+  const prevYear = prevDate.getFullYear();
+  const prevMonthIdx = prevDate.getMonth();
+  const todayDay = referenceDate.getDate();
+  const baseTs = referenceDate.getTime();
+
+  return [
+    // Current month income & expenses
+    {
+      id: 'ftx-cur-salary',
+      kind: 'income',
+      amount: 145000,
+      categoryId: 'fcat-salary',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(year, monthIdx, Math.min(todayDay, 5)),
+      note: 'Основное поступление',
+      isRecurring: true,
+      createdAtMs: baseTs - 86400 * 1000 * 8,
+    },
+    {
+      id: 'ftx-cur-housing',
+      kind: 'expense',
+      amount: 38500,
+      categoryId: 'fcat-housing',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(year, monthIdx, Math.min(todayDay, 6)),
+      note: 'Аренда и коммунальные платежи',
+      isRecurring: true,
+      createdAtMs: baseTs - 86400 * 1000 * 7,
+    },
+    {
+      id: 'ftx-cur-subs',
+      kind: 'expense',
+      amount: 2490,
+      categoryId: 'fcat-subscriptions',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(year, monthIdx, Math.min(todayDay, 8)),
+      note: 'Интернет, связь и облако',
+      isRecurring: true,
+      createdAtMs: baseTs - 86400 * 1000 * 6,
+    },
+    {
+      id: 'ftx-cur-groceries-1',
+      kind: 'expense',
+      amount: 11400,
+      categoryId: 'fcat-groceries',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(year, monthIdx, Math.max(1, todayDay - 4)),
+      note: 'Продукты на неделю',
+      isRecurring: false,
+      createdAtMs: baseTs - 86400 * 1000 * 4,
+    },
+    {
+      id: 'ftx-cur-groceries-2',
+      kind: 'expense',
+      amount: 6850,
+      categoryId: 'fcat-groceries',
+      accountId: 'acc-cash',
+      toAccountId: null,
+      date: monthDayKey(year, monthIdx, Math.max(1, todayDay - 1)),
+      note: 'Рынок и свежие овощи',
+      isRecurring: false,
+      createdAtMs: baseTs - 86400 * 1000 * 1,
+    },
+    {
+      id: 'ftx-cur-cafe',
+      kind: 'expense',
+      amount: 5400,
+      categoryId: 'fcat-cafe',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(year, monthIdx, Math.max(1, todayDay - 2)),
+      note: 'Обеды и кофе',
+      isRecurring: false,
+      createdAtMs: baseTs - 86400 * 1000 * 2,
+    },
+    {
+      id: 'ftx-cur-transport',
+      kind: 'expense',
+      amount: 3200,
+      categoryId: 'fcat-transport',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(year, monthIdx, Math.max(1, todayDay - 3)),
+      note: 'Пополнение карты и такси',
+      isRecurring: false,
+      createdAtMs: baseTs - 86400 * 1000 * 3,
+    },
+    {
+      id: 'ftx-cur-transfer',
+      kind: 'transfer',
+      amount: 25000,
+      categoryId: null,
+      accountId: 'acc-main-card',
+      toAccountId: 'acc-reserve',
+      date: monthDayKey(year, monthIdx, Math.max(1, todayDay - 1)),
+      note: 'Пополнение финансовой подушки',
+      isRecurring: false,
+      createdAtMs: baseTs - 3600 * 1000 * 12,
+    },
+    // Previous month reference points for trend & recurring reminders
+    {
+      id: 'ftx-prev-salary',
+      kind: 'income',
+      amount: 140000,
+      categoryId: 'fcat-salary',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(prevYear, prevMonthIdx, 5),
+      note: 'Основное поступление',
+      isRecurring: true,
+      createdAtMs: baseTs - 86400 * 1000 * 35,
+    },
+    {
+      id: 'ftx-prev-freelance',
+      kind: 'income',
+      amount: 28000,
+      categoryId: 'fcat-freelance',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(prevYear, prevMonthIdx, 18),
+      note: 'Разовая консультация',
+      isRecurring: false,
+      createdAtMs: baseTs - 86400 * 1000 * 24,
+    },
+    {
+      id: 'ftx-prev-housing',
+      kind: 'expense',
+      amount: 38500,
+      categoryId: 'fcat-housing',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(prevYear, prevMonthIdx, 6),
+      note: 'Аренда и коммунальные платежи',
+      isRecurring: true,
+      createdAtMs: baseTs - 86400 * 1000 * 34,
+    },
+    {
+      id: 'ftx-prev-gym',
+      kind: 'expense',
+      amount: 4900,
+      categoryId: 'fcat-health',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(prevYear, prevMonthIdx, 12),
+      note: 'Абонемент в спортзал',
+      isRecurring: true,
+      createdAtMs: baseTs - 86400 * 1000 * 28,
+    },
+    {
+      id: 'ftx-prev-groceries',
+      kind: 'expense',
+      amount: 26400,
+      categoryId: 'fcat-groceries',
+      accountId: 'acc-main-card',
+      toAccountId: null,
+      date: monthDayKey(prevYear, prevMonthIdx, 20),
+      note: 'Продукты за месяц',
+      isRecurring: false,
+      createdAtMs: baseTs - 86400 * 1000 * 22,
+    },
+  ];
+}
+
+export function createInitialFinanceGoals(): FinanceGoal[] {
+  return [
+    {
+      id: 'fgoal-cushion',
+      title: 'Подушка безопасности',
+      targetAmount: 500000,
+      currentAmount: 265000,
+      deadline: null,
+      color: 'emerald',
+      order: 0,
+    },
+    {
+      id: 'fgoal-vacation',
+      title: 'Отпуск и поездки',
+      targetAmount: 180000,
+      currentAmount: 65000,
+      deadline: null,
+      color: 'blue',
+      order: 1,
+    },
+  ];
+}
+
 

@@ -1,13 +1,15 @@
 import { CalendarClock, Search, Tag, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import type { CardItem, LabelDef } from '../types/planner';
+import type { CardBoardMeta, CardItem, LabelDef } from '../types/planner';
 import { formatRussianShortDate, parseFlexibleDate } from '../utils/dateUtils';
+import { LABEL_COLOR_META } from '../utils/labelStyles';
 
 interface QuickSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   cards: CardItem[];
   labels: LabelDef[];
+  boardMetaByCardId?: Map<string, CardBoardMeta>;
   onSelectCard: (card: CardItem) => void;
 }
 
@@ -16,6 +18,7 @@ export function QuickSearchModal({
   onClose,
   cards,
   labels,
+  boardMetaByCardId,
   onSelectCard,
 }: QuickSearchModalProps) {
   const [query, setQuery] = useState('');
@@ -86,6 +89,7 @@ export function QuickSearchModal({
           ) : (
             results.map((card) => {
               const cardLabels = labels.filter((l) => card.labelIds.includes(l.id));
+              const boardMeta = boardMetaByCardId?.get(card.id);
               return (
                 <button
                   key={card.id}
@@ -104,7 +108,18 @@ export function QuickSearchModal({
                       {card.description}
                     </div>
                   )}
-                  <div className="flex items-center gap-2 text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                    {boardMeta && (
+                      <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 font-medium">
+                        <span
+                          className={`w-1.5 h-1.5 rounded-xs shrink-0 ${
+                            LABEL_COLOR_META[boardMeta.boardColor]?.dot ?? 'bg-blue-600'
+                          }`}
+                          aria-hidden="true"
+                        />
+                        <span>{boardMeta.boardTitle}</span>
+                      </span>
+                    )}
                     {card.startDate && (
                       <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 font-medium">
                         <CalendarClock className="w-3 h-3" />

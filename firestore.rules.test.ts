@@ -25,6 +25,14 @@ test('firestore.rules includes all Eight Pillars guards', () => {
   assert.match(rulesContent, /function isValidNoteDoc\(/);
   assert.match(rulesContent, /match \/noteFolders\/\{folderId\}/);
   assert.match(rulesContent, /match \/notes\/\{noteId\}/);
+  assert.match(rulesContent, /function isValidFinanceAccountDoc\(/);
+  assert.match(rulesContent, /function isValidFinanceCategoryDoc\(/);
+  assert.match(rulesContent, /function isValidFinanceTransactionDoc\(/);
+  assert.match(rulesContent, /function isValidFinanceGoalDoc\(/);
+  assert.match(rulesContent, /match \/financeAccounts\/\{accountId\}/);
+  assert.match(rulesContent, /match \/financeCategories\/\{categoryId\}/);
+  assert.match(rulesContent, /match \/financeTransactions\/\{transactionId\}/);
+  assert.match(rulesContent, /match \/financeGoals\/\{goalId\}/);
 
   // Pillar 5 & 8: Bounded arrays + non-blanket list rules
   assert.match(rulesContent, /allow list: if false;/);
@@ -32,6 +40,7 @@ test('firestore.rules includes all Eight Pillars guards', () => {
   assert.match(rulesContent, /data\.checklist\.size\(\) <= 50/);
   assert.match(rulesContent, /data\.completions\.size\(\) <= 730/);
   assert.match(rulesContent, /data\.blocks\.size\(\) <= 200/);
+  assert.match(rulesContent, /data\.amount > 0 && data\.amount <= 1000000000/);
 
   // Master gate & temporal integrity
   assert.match(rulesContent, /exists\(\/databases\/\$\(database\)\/documents\/users\/\$\(userId\)\/boards\/\$\(boardId\)\)/);

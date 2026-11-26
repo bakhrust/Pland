@@ -15,6 +15,9 @@ const ConfirmActionModal = lazy(() =>
 const EventDetailModal = lazy(() =>
   import('./components/EventDetailModal').then((m) => ({ default: m.EventDetailModal }))
 );
+const FinanceView = lazy(() =>
+  import('./components/FinanceView').then((m) => ({ default: m.FinanceView }))
+);
 const GoogleCalendarDrawer = lazy(() =>
   import('./components/GoogleCalendarDrawer').then((m) => ({ default: m.GoogleCalendarDrawer }))
 );
@@ -43,6 +46,10 @@ const WeekPlannerView = lazy(() =>
   import('./components/WeekPlannerView').then((m) => ({ default: m.WeekPlannerView }))
 );
 import {
+  createInitialFinanceAccounts,
+  createInitialFinanceCategories,
+  createInitialFinanceGoals,
+  createInitialFinanceTransactions,
   createInitialHabits,
   createInitialNoteFolders,
   createInitialNotes,
@@ -75,6 +82,13 @@ import type {
   BoardState,
   CardItem,
   FilterState,
+  FinanceAccount,
+  FinanceAccountType,
+  FinanceCategory,
+  FinanceCategoryKind,
+  FinanceGoal,
+  FinanceTransaction,
+  FinanceTransactionKind,
   GoogleCalendarEvent,
   GoogleCalendarMeta,
   HabitItem,
@@ -93,13 +107,20 @@ import {
   addListToBoard,
   adjustCardDurationMinutes,
   deleteBoardFromWorkspace,
+  deleteCardInWorkspace,
   filterCards,
+  findCardInWorkspace,
+  getAllWorkspaceCards,
+  getCardBoardMetaMap,
   getCardsPendingGoogleSync,
+  getWorkspaceLabels,
   moveCardInBoard,
   renameBoardInWorkspace,
+  saveCardInWorkspace,
   scheduleCardAtSlot,
   scheduleCardForDaySpan,
   shiftCardDatesByDays,
+  updateCardInWorkspace,
 } from './utils/boardLogic';
 import {
   addDays,
@@ -110,6 +131,13 @@ import {
   toLocalDateKey,
   toLocalDateTimeInput,
 } from './utils/dateUtils';
+import {
+  applyGoalContribution,
+  createFinanceAccount,
+  createFinanceCategory,
+  createFinanceGoal,
+  createFinanceTransaction,
+} from './utils/financeLogic';
 import {
   adjustHabitDayCount,
   createHabitItem,
@@ -125,6 +153,10 @@ const DEV_PREVIEW_STORAGE_KEY = 'pland_dev_preview_v1';
 const DEV_PREVIEW_HABITS_KEY = 'pland_dev_preview_habits_v1';
 const DEV_PREVIEW_NOTE_FOLDERS_KEY = 'pland_dev_preview_note_folders_v1';
 const DEV_PREVIEW_NOTES_KEY = 'pland_dev_preview_notes_v1';
+const DEV_PREVIEW_FINANCE_ACCOUNTS_KEY = 'rst_dev_preview_fin_accounts_v1';
+const DEV_PREVIEW_FINANCE_CATEGORIES_KEY = 'rst_dev_preview_fin_categories_v1';
+const DEV_PREVIEW_FINANCE_TRANSACTIONS_KEY = 'rst_dev_preview_fin_transactions_v1';
+const DEV_PREVIEW_FINANCE_GOALS_KEY = 'rst_dev_preview_fin_goals_v1';
 const OWNER_EMAIL = 'bakhrust@gmail.com';
 
 function isAuthorizedOwner(user: User | null): user is User {
@@ -195,6 +227,21 @@ function loadDevPreviewNotes(): NotePage[] {
     // ignore corrupted storage
   }
   return createInitialNotes(Date.now());
+}
+
+function loadDevPreviewFinanceList<T>(key: string, fallback: () => T[]): T[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed as T[];
+      }
+    }
+  } catch {
+    // ignore corrupted storage
+  }
+  return fallback();
 }
 
 export default function App() {
@@ -268,6 +315,28 @@ export default function App() {
   const [notes, setNotes] = useState<NotePage[]>(() =>
     isOfflineOrGuest ? loadDevPreviewNotes() : createInitialNotes(Date.now())
   );
+  const [financeAccounts, setFinanceAccounts] = useState<FinanceAccount[]>(() =>
+    isOfflineOrGuest
+      ? loadDevPreviewFinanceList(DEV_PREVIEW_FINANCE_ACCOUNTS_KEY, createInitialFinanceAccounts)
+      : createInitialFinanceAccounts()
+  );
+  const [financeCategories, setFinanceCategories] = useState<FinanceCategory[]>(() =>
+    isOfflineOrGuest
+      ? loadDevPreviewFinanceList(DEV_PREVIEW_FINANCE_CATEGORIES_KEY, createInitialFinanceCategories)
+      : createInitialFinanceCategories()
+  );
+  const [financeTransactions, setFinanceTransactions] = useState<FinanceTransaction[]>(() =>
+    isOfflineOrGuest
+      ? loadDevPreviewFinanceList(DEV_PREVIEW_FINANCE_TRANSACTIONS_KEY, () =>
+          createInitialFinanceTransactions(new Date())
+        )
+      : createInitialFinanceTransactions(new Date())
+  );
+  const [financeGoals, setFinanceGoals] = useState<FinanceGoal[]>(() =>
+    isOfflineOrGuest
+      ? loadDevPreviewFinanceList(DEV_PREVIEW_FINANCE_GOALS_KEY, createInitialFinanceGoals)
+      : createInitialFinanceGoals()
+  );
   const activeBoard = useMemo(
     () => workspace.boards.find((b) => b.id === workspace.activeBoardId) ?? workspace.boards[0],
     [workspace]
@@ -335,11 +404,13 @@ export default function App() {
     search: '',
     labelId: 'all',
   });
+  const [calendarBoardFilter, setCalendarBoardFilter] = useState<string | 'all'>('all');
 
   // Modals & Drawers
   const [cardModalState, setCardModalState] = useState<{
     isOpen: boolean;
     card: CardItem | null;
+    boardId?: string;
     defaultListId: string;
     defaultStartDate?: string | null;
     defaultEndDate?: string | null;
@@ -367,6 +438,10 @@ export default function App() {
   const lastSyncedHabitsRef = useRef<HabitItem[] | null>(null);
   const lastSyncedNoteFoldersRef = useRef<NoteFolder[] | null>(null);
   const lastSyncedNotesRef = useRef<NotePage[] | null>(null);
+  const lastSyncedFinAccountsRef = useRef<FinanceAccount[] | null>(null);
+  const lastSyncedFinCategoriesRef = useRef<FinanceCategory[] | null>(null);
+  const lastSyncedFinTransactionsRef = useRef<FinanceTransaction[] | null>(null);
+  const lastSyncedFinGoalsRef = useRef<FinanceGoal[] | null>(null);
   const lastSyncedPrefsRef = useRef<string>('');
 
   const [calendars, setCalendars] = useState<GoogleCalendarMeta[]>([]);
@@ -495,6 +570,93 @@ export default function App() {
     }
   }, [notes, googleUser, isOfflineOrGuest]);
 
+  // Sync finance accounts, categories, transactions, and goals to Firestore or local preview storage
+  useEffect(() => {
+    if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinAccountsRef.current) {
+      const prev = lastSyncedFinAccountsRef.current;
+      if (prev === financeAccounts) return;
+      lastSyncedFinAccountsRef.current = financeAccounts;
+      void loadFirestoreWorkspaceModule()
+        .then((m) => m.syncFinanceAccountsChangesToFirestore(googleUser.uid, prev, financeAccounts))
+        .catch((err) => {
+          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
+        });
+      return;
+    }
+    if (isOfflineOrGuest && !googleUser) {
+      try {
+        localStorage.setItem(DEV_PREVIEW_FINANCE_ACCOUNTS_KEY, JSON.stringify(financeAccounts));
+      } catch {
+        // ignore
+      }
+    }
+  }, [financeAccounts, googleUser, isOfflineOrGuest]);
+
+  useEffect(() => {
+    if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinCategoriesRef.current) {
+      const prev = lastSyncedFinCategoriesRef.current;
+      if (prev === financeCategories) return;
+      lastSyncedFinCategoriesRef.current = financeCategories;
+      void loadFirestoreWorkspaceModule()
+        .then((m) => m.syncFinanceCategoriesChangesToFirestore(googleUser.uid, prev, financeCategories))
+        .catch((err) => {
+          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
+        });
+      return;
+    }
+    if (isOfflineOrGuest && !googleUser) {
+      try {
+        localStorage.setItem(DEV_PREVIEW_FINANCE_CATEGORIES_KEY, JSON.stringify(financeCategories));
+      } catch {
+        // ignore
+      }
+    }
+  }, [financeCategories, googleUser, isOfflineOrGuest]);
+
+  useEffect(() => {
+    if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinTransactionsRef.current) {
+      const prev = lastSyncedFinTransactionsRef.current;
+      if (prev === financeTransactions) return;
+      lastSyncedFinTransactionsRef.current = financeTransactions;
+      void loadFirestoreWorkspaceModule()
+        .then((m) =>
+          m.syncFinanceTransactionsChangesToFirestore(googleUser.uid, prev, financeTransactions)
+        )
+        .catch((err) => {
+          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
+        });
+      return;
+    }
+    if (isOfflineOrGuest && !googleUser) {
+      try {
+        localStorage.setItem(DEV_PREVIEW_FINANCE_TRANSACTIONS_KEY, JSON.stringify(financeTransactions));
+      } catch {
+        // ignore
+      }
+    }
+  }, [financeTransactions, googleUser, isOfflineOrGuest]);
+
+  useEffect(() => {
+    if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinGoalsRef.current) {
+      const prev = lastSyncedFinGoalsRef.current;
+      if (prev === financeGoals) return;
+      lastSyncedFinGoalsRef.current = financeGoals;
+      void loadFirestoreWorkspaceModule()
+        .then((m) => m.syncFinanceGoalsChangesToFirestore(googleUser.uid, prev, financeGoals))
+        .catch((err) => {
+          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
+        });
+      return;
+    }
+    if (isOfflineOrGuest && !googleUser) {
+      try {
+        localStorage.setItem(DEV_PREVIEW_FINANCE_GOALS_KEY, JSON.stringify(financeGoals));
+      } catch {
+        // ignore
+      }
+    }
+  }, [financeGoals, googleUser, isOfflineOrGuest]);
+
   // Apply dark class to document.documentElement
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -546,6 +708,10 @@ export default function App() {
       lastSyncedHabitsRef.current = loaded.habits;
       lastSyncedNoteFoldersRef.current = loaded.noteFolders;
       lastSyncedNotesRef.current = loaded.notes;
+      lastSyncedFinAccountsRef.current = loaded.financeAccounts;
+      lastSyncedFinCategoriesRef.current = loaded.financeCategories;
+      lastSyncedFinTransactionsRef.current = loaded.financeTransactions;
+      lastSyncedFinGoalsRef.current = loaded.financeGoals;
       lastSyncedPrefsRef.current = JSON.stringify({
         visibleCalendarIds: loaded.visibleCalendarIds,
         targetCalendarId: loaded.targetCalendarId,
@@ -555,6 +721,10 @@ export default function App() {
       setHabits(loaded.habits);
       setNoteFolders(loaded.noteFolders);
       setNotes(loaded.notes);
+      setFinanceAccounts(loaded.financeAccounts);
+      setFinanceCategories(loaded.financeCategories);
+      setFinanceTransactions(loaded.financeTransactions);
+      setFinanceGoals(loaded.financeGoals);
       setVisibleCalendarIds(loaded.visibleCalendarIds);
       setTargetCalendarId(loaded.targetCalendarId);
       setTheme(loaded.theme);
@@ -591,6 +761,10 @@ export default function App() {
         lastSyncedHabitsRef.current = null;
         lastSyncedNoteFoldersRef.current = null;
         lastSyncedNotesRef.current = null;
+        lastSyncedFinAccountsRef.current = null;
+        lastSyncedFinCategoriesRef.current = null;
+        lastSyncedFinTransactionsRef.current = null;
+        lastSyncedFinGoalsRef.current = null;
         lastSyncedPrefsRef.current = '';
         setGoogleUser(null);
         setNeedsAuth(true);
@@ -600,6 +774,10 @@ export default function App() {
           setHabits(createInitialHabits(new Date()));
           setNoteFolders(createInitialNoteFolders());
           setNotes(createInitialNotes(Date.now()));
+          setFinanceAccounts(createInitialFinanceAccounts());
+          setFinanceCategories(createInitialFinanceCategories());
+          setFinanceTransactions(createInitialFinanceTransactions(new Date()));
+          setFinanceGoals(createInitialFinanceGoals());
         }
         setIsAuthChecked(true);
       }
@@ -708,9 +886,10 @@ export default function App() {
           setVisibleCalendarIds((prev) => (prev.length > 0 ? prev : [primary.id]));
           setTargetCalendarId(primary.id);
         }
-        const activeCards =
-          loadedWs?.boards.find((b) => b.id === loadedWs.activeBoardId)?.state.cards ?? board.cards;
-        const pendingCards = getCardsPendingGoogleSync(activeCards);
+        const allLoadedCards = loadedWs
+          ? getAllWorkspaceCards(loadedWs, 'all')
+          : getAllWorkspaceCards(workspace, 'all');
+        const pendingCards = getCardsPendingGoogleSync(allLoadedCards);
         if (pendingCards.length > 0) {
           const calId = primary?.id || targetCalendarId || 'primary';
           const calName = primary?.summary || 'Основной календарь';
@@ -748,6 +927,10 @@ export default function App() {
     lastSyncedHabitsRef.current = null;
     lastSyncedNoteFoldersRef.current = null;
     lastSyncedNotesRef.current = null;
+    lastSyncedFinAccountsRef.current = null;
+    lastSyncedFinCategoriesRef.current = null;
+    lastSyncedFinTransactionsRef.current = null;
+    lastSyncedFinGoalsRef.current = null;
     lastSyncedPrefsRef.current = '';
     setGoogleUser(null);
     setNeedsAuth(true);
@@ -759,6 +942,10 @@ export default function App() {
     setHabits(createInitialHabits(new Date()));
     setNoteFolders(createInitialNoteFolders());
     setNotes(createInitialNotes(Date.now()));
+    setFinanceAccounts(createInitialFinanceAccounts());
+    setFinanceCategories(createInitialFinanceCategories());
+    setFinanceTransactions(createInitialFinanceTransactions(new Date()));
+    setFinanceGoals(createInitialFinanceGoals());
     try {
       localStorage.removeItem('pland_workspace_v1');
       localStorage.removeItem('pland_board_v1');
@@ -767,22 +954,48 @@ export default function App() {
       localStorage.removeItem(DEV_PREVIEW_HABITS_KEY);
       localStorage.removeItem(DEV_PREVIEW_NOTE_FOLDERS_KEY);
       localStorage.removeItem(DEV_PREVIEW_NOTES_KEY);
+      localStorage.removeItem(DEV_PREVIEW_FINANCE_ACCOUNTS_KEY);
+      localStorage.removeItem(DEV_PREVIEW_FINANCE_CATEGORIES_KEY);
+      localStorage.removeItem(DEV_PREVIEW_FINANCE_TRANSACTIONS_KEY);
+      localStorage.removeItem(DEV_PREVIEW_FINANCE_GOALS_KEY);
     } catch {
       // ignore
     }
     setNotice({ kind: 'success', text: 'Аккаунт Google отключён' });
   };
 
-  // Filtered Cards
+  // Filtered Cards & Workspace-wide Calendar Data
   const filteredCards = useMemo(() => filterCards(board.cards, filters), [board.cards, filters]);
+  const allWorkspaceCards = useMemo(() => getAllWorkspaceCards(workspace, 'all'), [workspace]);
+  const allWorkspaceLabels = useMemo(() => getWorkspaceLabels(workspace), [workspace]);
+  const cardBoardMetaMap = useMemo(() => getCardBoardMetaMap(workspace), [workspace]);
+  const calendarFilteredCards = useMemo(
+    () => filterCards(getAllWorkspaceCards(workspace, calendarBoardFilter), filters),
+    [workspace, calendarBoardFilter, filters]
+  );
   const scheduledCards = useMemo(
-    () => board.cards.filter((c) => Boolean(c.startDate)),
-    [board.cards]
+    () => allWorkspaceCards.filter((c) => Boolean(c.startDate)),
+    [allWorkspaceCards]
   );
   const pendingSyncCards = useMemo(
-    () => getCardsPendingGoogleSync(board.cards),
-    [board.cards]
+    () => getCardsPendingGoogleSync(allWorkspaceCards),
+    [allWorkspaceCards]
   );
+  const toolbarLabels = useMemo(() => {
+    if (viewMode === 'board') return board.labels;
+    if (calendarBoardFilter === 'all') return allWorkspaceLabels;
+    return workspace.boards.find((b) => b.id === calendarBoardFilter)?.state.labels ?? allWorkspaceLabels;
+  }, [viewMode, board.labels, calendarBoardFilter, allWorkspaceLabels, workspace.boards]);
+
+  const openEditCardModal = (card: CardItem) => {
+    const ownerBoardId = cardBoardMetaMap.get(card.id)?.boardId ?? activeBoard.id;
+    setCardModalState({
+      isOpen: true,
+      card,
+      boardId: ownerBoardId,
+      defaultListId: card.listId,
+    });
+  };
 
   // Workspace Multi-Board Handlers
   const handleSelectBoard = (boardId: string) => {
@@ -815,6 +1028,9 @@ export default function App() {
     const target = workspace.boards.find((b) => b.id === boardId);
     if (!target || workspace.boards.length <= 1) return;
     setWorkspace((prev) => deleteBoardFromWorkspace(prev, boardId));
+    if (calendarBoardFilter === boardId) {
+      setCalendarBoardFilter('all');
+    }
     setFilters({ search: '', labelId: 'all' });
     setDraggedCardId(null);
     setCardModalState((prev) => ({ ...prev, isOpen: false, card: null }));
@@ -960,6 +1176,166 @@ export default function App() {
     setNotice({ kind: 'success', text: 'Стартовый блокнот добавлен' });
   };
 
+  // Finance Handlers
+  const handleSaveFinanceTransaction = (payload: {
+    id?: string;
+    kind: FinanceTransactionKind;
+    amount: number;
+    categoryId: string | null;
+    accountId: string;
+    toAccountId: string | null;
+    date: string;
+    note: string;
+    isRecurring: boolean;
+  }) => {
+    if (payload.id) {
+      setFinanceTransactions((prev) =>
+        prev.map((tx) =>
+          tx.id === payload.id
+            ? createFinanceTransaction({
+                ...payload,
+                id: tx.id,
+                createdAtMs: tx.createdAtMs,
+              })
+            : tx
+        )
+      );
+      setNotice({ kind: 'success', text: 'Операция обновлена' });
+    } else {
+      const created = createFinanceTransaction(payload);
+      setFinanceTransactions((prev) => [created, ...prev]);
+      setNotice({ kind: 'success', text: 'Операция добавлена' });
+    }
+  };
+
+  const handleDeleteFinanceTransaction = (transactionId: string) => {
+    setFinanceTransactions((prev) => prev.filter((t) => t.id !== transactionId));
+    setNotice({ kind: 'success', text: 'Операция удалена' });
+  };
+
+  const handleSaveFinanceCategory = (payload: {
+    id?: string;
+    name: string;
+    kind: FinanceCategoryKind;
+    monthlyLimit: number | null;
+    color: LabelColor;
+  }) => {
+    if (payload.id) {
+      setFinanceCategories((prev) =>
+        prev.map((cat, idx) =>
+          cat.id === payload.id
+            ? createFinanceCategory({ ...payload, id: cat.id, order: idx })
+            : cat
+        )
+      );
+      setNotice({ kind: 'success', text: `Категория «${payload.name}» обновлена` });
+    } else {
+      setFinanceCategories((prev) => [
+        ...prev,
+        createFinanceCategory({ ...payload, order: prev.length }),
+      ]);
+      setNotice({ kind: 'success', text: `Категория «${payload.name}» создана` });
+    }
+  };
+
+  const handleDeleteFinanceCategory = (categoryId: string) => {
+    const target = financeCategories.find((c) => c.id === categoryId);
+    setFinanceCategories((prev) => prev.filter((c) => c.id !== categoryId));
+    setFinanceTransactions((prev) =>
+      prev.map((t) => (t.categoryId === categoryId ? { ...t, categoryId: null } : t))
+    );
+    if (target) {
+      setNotice({ kind: 'success', text: `Категория «${target.name}» удалена` });
+    }
+  };
+
+  const handleSaveFinanceAccount = (payload: {
+    id?: string;
+    title: string;
+    type: FinanceAccountType;
+    initialBalance: number;
+    color: LabelColor;
+  }) => {
+    if (payload.id) {
+      setFinanceAccounts((prev) =>
+        prev.map((acc, idx) =>
+          acc.id === payload.id
+            ? createFinanceAccount({ ...payload, id: acc.id, order: idx })
+            : acc
+        )
+      );
+      setNotice({ kind: 'success', text: `Счёт «${payload.title}» обновлён` });
+    } else {
+      setFinanceAccounts((prev) => [
+        ...prev,
+        createFinanceAccount({ ...payload, order: prev.length }),
+      ]);
+      setNotice({ kind: 'success', text: `Счёт «${payload.title}» добавлен` });
+    }
+  };
+
+  const handleDeleteFinanceAccount = (accountId: string) => {
+    if (financeAccounts.length <= 1) return;
+    const target = financeAccounts.find((a) => a.id === accountId);
+    const remaining = financeAccounts.filter((a) => a.id !== accountId);
+    const fallbackAccountId = remaining[0].id;
+    setFinanceAccounts(remaining);
+    setFinanceTransactions((prev) =>
+      prev
+        .filter((t) => !(t.kind === 'transfer' && (t.accountId === accountId || t.toAccountId === accountId)))
+        .map((t) => (t.accountId === accountId ? { ...t, accountId: fallbackAccountId } : t))
+    );
+    if (target) {
+      setNotice({ kind: 'success', text: `Счёт «${target.title}» удалён` });
+    }
+  };
+
+  const handleSaveFinanceGoal = (payload: {
+    id?: string;
+    title: string;
+    targetAmount: number;
+    currentAmount: number;
+    deadline: string | null;
+    color: LabelColor;
+  }) => {
+    if (payload.id) {
+      setFinanceGoals((prev) =>
+        prev.map((g, idx) =>
+          g.id === payload.id ? createFinanceGoal({ ...payload, id: g.id, order: idx }) : g
+        )
+      );
+      setNotice({ kind: 'success', text: `Цель «${payload.title}» обновлена` });
+    } else {
+      setFinanceGoals((prev) => [
+        ...prev,
+        createFinanceGoal({ ...payload, order: prev.length }),
+      ]);
+      setNotice({ kind: 'success', text: `Цель «${payload.title}» создана` });
+    }
+  };
+
+  const handleDeleteFinanceGoal = (goalId: string) => {
+    const target = financeGoals.find((g) => g.id === goalId);
+    setFinanceGoals((prev) => prev.filter((g) => g.id !== goalId));
+    if (target) {
+      setNotice({ kind: 'success', text: `Цель «${target.title}» удалена` });
+    }
+  };
+
+  const handleContributeFinanceGoal = (goalId: string, deltaAmount: number) => {
+    setFinanceGoals((prev) =>
+      prev.map((g) => (g.id === goalId ? applyGoalContribution(g, deltaAmount) : g))
+    );
+  };
+
+  const handleSeedStarterFinance = () => {
+    setFinanceAccounts(createInitialFinanceAccounts());
+    setFinanceCategories(createInitialFinanceCategories());
+    setFinanceTransactions(createInitialFinanceTransactions(new Date()));
+    setFinanceGoals(createInitialFinanceGoals());
+    setNotice({ kind: 'success', text: 'Шаблон личного бюджета добавлен' });
+  };
+
   // Board Handlers
   const handleAddCardInline = (listId: string, title: string) => {
     setBoard((prev) => {
@@ -1015,46 +1391,28 @@ export default function App() {
     });
   };
 
-  const handleSaveCard = (saved: CardItem, isNew: boolean) => {
-    const previous = board.cards.find((c) => c.id === saved.id);
-    const savedWithOrder = isNew
-      ? { ...saved, order: board.cards.filter((c) => c.listId === saved.listId).length }
-      : saved;
-
-    setBoard((prev) => {
-      if (isNew) {
-        return {
-          ...prev,
-          cards: [...prev.cards, savedWithOrder],
-        };
-      }
-      return {
-        ...prev,
-        cards: prev.cards.map((c) => (c.id === savedWithOrder.id ? savedWithOrder : c)),
-      };
-    });
+  const handleSaveCard = (saved: CardItem, isNew: boolean, targetBoardId: string) => {
+    const previous = findCardInWorkspace(workspace, saved.id)?.card;
+    setWorkspace((prev) => saveCardInWorkspace(prev, saved, isNew, targetBoardId));
     setCardModalState((prev) => ({ ...prev, isOpen: false, card: null }));
 
     const isConnected = Boolean(googleUser) && !needsAuth;
-    if (savedWithOrder.startDate && savedWithOrder.syncDirty) {
+    if (saved.startDate && saved.syncDirty) {
       if (isConnected) {
-        promptGoogleSyncForCard(savedWithOrder);
+        promptGoogleSyncForCard(saved);
       } else {
         setNotice({
           kind: 'success',
           text: 'Время сохранено. Подключите Google для синхронизации.',
         });
       }
-    } else if (!savedWithOrder.startDate && previous?.googleEventId && isConnected) {
+    } else if (!saved.startDate && previous?.googleEventId && isConnected) {
       handleRequestGoogleDelete(previous);
     }
   };
 
   const handleDeleteCard = (cardId: string) => {
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.filter((c) => c.id !== cardId),
-    }));
+    setWorkspace((prev) => deleteCardInWorkspace(prev, cardId));
     setCardModalState((prev) => ({ ...prev, isOpen: false, card: null }));
   };
 
@@ -1070,15 +1428,12 @@ export default function App() {
     }
   };
 
-  // Planyway Scheduling Handlers
+  // Planyway Scheduling Handlers (across all boards)
   const handleScheduleCardAtSlot = (cardId: string, dateKey: string, hour: number) => {
-    const target = board.cards.find((c) => c.id === cardId);
-    if (!target) return;
-    const updated = scheduleCardAtSlot(target, dateKey, hour);
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.map((c) => (c.id === cardId ? updated : c)),
-    }));
+    const found = findCardInWorkspace(workspace, cardId);
+    if (!found) return;
+    const updated = scheduleCardAtSlot(found.card, dateKey, hour);
+    setWorkspace((prev) => updateCardInWorkspace(prev, cardId, () => updated));
     setDraggedCardId(null);
     maybePromptGoogleSyncAfterSchedule(
       updated,
@@ -1087,13 +1442,10 @@ export default function App() {
   };
 
   const handleScheduleCardAllDay = (cardId: string, dateKey: string) => {
-    const target = board.cards.find((c) => c.id === cardId);
-    if (!target) return;
-    const updated = scheduleCardForDaySpan(target, dateKey, 1);
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.map((c) => (c.id === cardId ? updated : c)),
-    }));
+    const found = findCardInWorkspace(workspace, cardId);
+    if (!found) return;
+    const updated = scheduleCardForDaySpan(found.card, dateKey, 1);
+    setWorkspace((prev) => updateCardInWorkspace(prev, cardId, () => updated));
     setDraggedCardId(null);
     maybePromptGoogleSyncAfterSchedule(
       updated,
@@ -1102,24 +1454,18 @@ export default function App() {
   };
 
   const handleAdjustCardDuration = (cardId: string, deltaMinutes: number) => {
-    const target = board.cards.find((c) => c.id === cardId);
-    if (!target) return;
-    const updated = adjustCardDurationMinutes(target, deltaMinutes);
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.map((c) => (c.id === cardId ? updated : c)),
-    }));
+    const found = findCardInWorkspace(workspace, cardId);
+    if (!found) return;
+    const updated = adjustCardDurationMinutes(found.card, deltaMinutes);
+    setWorkspace((prev) => updateCardInWorkspace(prev, cardId, () => updated));
     maybePromptGoogleSyncAfterSchedule(updated);
   };
 
   const handleScheduleCardOnDay = (cardId: string, dateKey: string) => {
-    const target = board.cards.find((c) => c.id === cardId);
-    if (!target) return;
-    const updated = scheduleCardForDaySpan(target, dateKey, 1);
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.map((c) => (c.id === cardId ? updated : c)),
-    }));
+    const found = findCardInWorkspace(workspace, cardId);
+    if (!found) return;
+    const updated = scheduleCardForDaySpan(found.card, dateKey, 1);
+    setWorkspace((prev) => updateCardInWorkspace(prev, cardId, () => updated));
     setDraggedCardId(null);
     maybePromptGoogleSyncAfterSchedule(
       updated,
@@ -1133,26 +1479,33 @@ export default function App() {
     laneId: string,
     groupBy: TimelineGroupBy
   ) => {
-    const target = board.cards.find((c) => c.id === cardId);
-    if (!target) return;
-    let updated = target.startDate
-      ? scheduleCardForDaySpan(target, dateKey, 1)
-      : scheduleCardForDaySpan(target, dateKey, 2);
-    if (groupBy === 'label') {
+    const found = findCardInWorkspace(workspace, cardId);
+    if (!found) return;
+    let updated = found.card.startDate
+      ? scheduleCardForDaySpan(found.card, dateKey, 1)
+      : scheduleCardForDaySpan(found.card, dateKey, 2);
+
+    if (groupBy === 'board') {
+      setWorkspace((prev) => saveCardInWorkspace(prev, updated, false, laneId));
+    } else if (groupBy === 'label') {
       updated = {
         ...updated,
         labelIds: laneId === 'unlabeled' ? [] : [laneId],
       };
+      setWorkspace((prev) => updateCardInWorkspace(prev, cardId, () => updated));
     } else {
+      const targetBoard = workspace.boards.find((b) => b.state.lists.some((l) => l.id === laneId));
       updated = {
         ...updated,
         listId: laneId,
       };
+      if (targetBoard && targetBoard.id !== found.board.id) {
+        setWorkspace((prev) => saveCardInWorkspace(prev, updated, false, targetBoard.id));
+      } else {
+        setWorkspace((prev) => updateCardInWorkspace(prev, cardId, () => updated));
+      }
     }
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.map((c) => (c.id === cardId ? updated : c)),
-    }));
+
     setDraggedCardId(null);
     maybePromptGoogleSyncAfterSchedule(
       updated,
@@ -1161,23 +1514,17 @@ export default function App() {
   };
 
   const handleShiftCardDays = (cardId: string, deltaDays: number) => {
-    const target = board.cards.find((c) => c.id === cardId);
-    if (!target) return;
-    const updated = shiftCardDatesByDays(target, deltaDays);
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.map((c) => (c.id === cardId ? updated : c)),
-    }));
+    const found = findCardInWorkspace(workspace, cardId);
+    if (!found) return;
+    const updated = shiftCardDatesByDays(found.card, deltaDays);
+    setWorkspace((prev) => updateCardInWorkspace(prev, cardId, () => updated));
     maybePromptGoogleSyncAfterSchedule(updated);
   };
 
   const handleQuickScheduleToday = (card: CardItem) => {
     const todayKey = toLocalDateKey(new Date());
     const updated = scheduleCardAtSlot(card, todayKey, 10, 60);
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.map((c) => (c.id === card.id ? updated : c)),
-    }));
+    setWorkspace((prev) => updateCardInWorkspace(prev, card.id, () => updated));
     maybePromptGoogleSyncAfterSchedule(
       updated,
       `Задача «${card.title}» запланирована на сегодня (10:00)`
@@ -1229,11 +1576,8 @@ export default function App() {
   };
 
   const handleRequestGoogleCreateOrUpdate = (card: CardItem) => {
-    // Save local edits first so state matches
-    setBoard((prev) => ({
-      ...prev,
-      cards: prev.cards.map((c) => (c.id === card.id ? card : c)),
-    }));
+    // Save local edits first across whichever board owns this card
+    setWorkspace((prev) => updateCardInWorkspace(prev, card.id, () => card));
 
     promptGoogleSyncForCard(card);
   };
@@ -1433,7 +1777,12 @@ export default function App() {
   };
 
   // Import Google Event as Board Card
-  const handleImportGoogleEventAsCard = (ev: GoogleCalendarEvent, listId: string) => {
+  const handleImportGoogleEventAsCard = (
+    ev: GoogleCalendarEvent,
+    listId: string,
+    targetBoardId?: string
+  ) => {
+    const resolvedBoardId = targetBoardId ?? activeBoard.id;
     const startVal = ev.allDay
       ? ev.start.slice(0, 10)
       : toLocalDateTimeInput(new Date(ev.start));
@@ -1444,7 +1793,7 @@ export default function App() {
     const newCard: CardItem = {
       id: `card-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       listId,
-      order: board.cards.filter((c) => c.listId === listId).length,
+      order: 0,
       title: ev.summary,
       description: ev.description || '',
       labelIds: ['lbl-meeting'],
@@ -1458,9 +1807,15 @@ export default function App() {
       lastSyncedAt: new Date().toISOString(),
     };
 
-    setBoard((prev) => ({ ...prev, cards: [...prev.cards, newCard] }));
+    setWorkspace((prev) => saveCardInWorkspace(prev, newCard, true, resolvedBoardId));
     setSelectedGoogleEvent(null);
-    setNotice({ kind: 'success', text: `Карточка «${ev.summary}» создана на доске` });
+    const boardTitle = workspace.boards.find((b) => b.id === resolvedBoardId)?.title;
+    setNotice({
+      kind: 'success',
+      text: boardTitle
+        ? `Карточка «${ev.summary}» создана на доске «${boardTitle}»`
+        : `Карточка «${ev.summary}» создана на доске`,
+    });
   };
 
   const isGoogleConnected = Boolean(googleUser) && !needsAuth;
@@ -1524,7 +1879,7 @@ export default function App() {
           onNavigateDate={handleNavigateDate}
           filters={filters}
           onChangeFilters={setFilters}
-          labels={board.labels}
+          labels={toolbarLabels}
           timelineGroupBy={timelineGroupBy}
           onChangeTimelineGroupBy={setTimelineGroupBy}
           timelineDaysCount={timelineDaysCount}
@@ -1540,13 +1895,18 @@ export default function App() {
               setIsGoogleDrawerOpen(true);
             }
           }}
-          onOpenNewCardModal={() =>
+          onOpenNewCardModal={() => {
+            const preferredBoard =
+              viewMode !== 'board' && calendarBoardFilter !== 'all'
+                ? workspace.boards.find((b) => b.id === calendarBoardFilter) ?? activeBoard
+                : activeBoard;
             setCardModalState({
               isOpen: true,
               card: null,
-              defaultListId: board.lists[0]?.id ?? 'list-backlog',
-            })
-          }
+              boardId: preferredBoard.id,
+              defaultListId: preferredBoard.state.lists[0]?.id ?? 'list-backlog',
+            });
+          }}
           onOpenQuickSearch={() => setIsQuickSearchOpen(true)}
         />
       )}
@@ -1560,10 +1920,27 @@ export default function App() {
             </div>
           }
         >
-          {viewMode === 'finance' || viewMode === 'sport' ? (
+          {viewMode === 'sport' ? (
             <UpcomingModuleView
               section={viewMode}
               onGoToPlan={() => handleSelectSection('plan')}
+            />
+          ) : viewMode === 'finance' ? (
+            <FinanceView
+              accounts={financeAccounts}
+              categories={financeCategories}
+              transactions={financeTransactions}
+              goals={financeGoals}
+              onSaveTransaction={handleSaveFinanceTransaction}
+              onDeleteTransaction={handleDeleteFinanceTransaction}
+              onSaveCategory={handleSaveFinanceCategory}
+              onDeleteCategory={handleDeleteFinanceCategory}
+              onSaveAccount={handleSaveFinanceAccount}
+              onDeleteAccount={handleDeleteFinanceAccount}
+              onSaveGoal={handleSaveFinanceGoal}
+              onDeleteGoal={handleDeleteFinanceGoal}
+              onContributeGoal={handleContributeFinanceGoal}
+              onSeedStarterFinance={handleSeedStarterFinance}
             />
           ) : viewMode === 'notes' ? (
             <NotesView
@@ -1592,13 +1969,8 @@ export default function App() {
               lists={board.lists}
               cards={filteredCards}
               labels={board.labels}
-              onSelectCard={(card) =>
-                setCardModalState({
-                  isOpen: true,
-                  card,
-                  defaultListId: card.listId,
-                })
-              }
+              onSelectCard={openEditCardModal}
+              onQuickScheduleToday={handleQuickScheduleToday}
               onAddCard={handleAddCardInline}
               onMoveCard={handleMoveCard}
               onAddList={handleAddList}
@@ -1609,16 +1981,11 @@ export default function App() {
             <>
               {showBacklogSidebar && (
                 <PlannerBacklogSidebar
-                  cards={filteredCards}
-                  lists={board.lists}
-                  labels={board.labels}
-                  onSelectCard={(card) =>
-                    setCardModalState({
-                      isOpen: true,
-                      card,
-                      defaultListId: card.listId,
-                    })
-                  }
+                  boards={workspace.boards}
+                  selectedBoardFilter={calendarBoardFilter}
+                  onChangeBoardFilter={setCalendarBoardFilter}
+                  filters={filters}
+                  onSelectCard={openEditCardModal}
                   onQuickScheduleToday={handleQuickScheduleToday}
                   onDragStartCard={setDraggedCardId}
                   onDragEndCard={() => setDraggedCardId(null)}
@@ -1629,64 +1996,66 @@ export default function App() {
               {viewMode === 'week' && (
                 <WeekPlannerView
                   anchorDate={anchorDate}
-                  cards={filteredCards}
-                  labels={board.labels}
+                  cards={calendarFilteredCards}
+                  labels={allWorkspaceLabels}
+                  boardMetaByCardId={cardBoardMetaMap}
+                  showBoardBadge={workspace.boards.length > 1}
                   googleEvents={googleEvents}
                   draggedCardId={draggedCardId}
                   onDragStartCard={setDraggedCardId}
                   onDragEndCard={() => setDraggedCardId(null)}
-                  onSelectCard={(card) =>
-                    setCardModalState({
-                      isOpen: true,
-                      card,
-                      defaultListId: card.listId,
-                    })
-                  }
+                  onSelectCard={openEditCardModal}
                   onSelectGoogleEvent={setSelectedGoogleEvent}
                   onScheduleCardAtSlot={handleScheduleCardAtSlot}
                   onScheduleCardAllDay={handleScheduleCardAllDay}
                   onAdjustCardDuration={handleAdjustCardDuration}
-                  onCreateCardAtSlot={(dateKey, hour) =>
+                  onCreateCardAtSlot={(dateKey, hour) => {
+                    const preferredBoard =
+                      calendarBoardFilter !== 'all'
+                        ? workspace.boards.find((b) => b.id === calendarBoardFilter) ?? activeBoard
+                        : activeBoard;
                     setCardModalState({
                       isOpen: true,
                       card: null,
-                      defaultListId: board.lists[0]?.id ?? 'list-planned',
+                      boardId: preferredBoard.id,
+                      defaultListId: preferredBoard.state.lists[0]?.id ?? 'list-planned',
                       defaultStartDate: `${dateKey}T${pad2(hour)}:00`,
                       defaultEndDate: `${dateKey}T${pad2(hour + 1)}:00`,
                       defaultAllDay: false,
-                    })
-                  }
+                    });
+                  }}
                 />
               )}
 
               {viewMode === 'month' && (
                 <MonthPlannerView
                   anchorDate={anchorDate}
-                  cards={filteredCards}
-                  labels={board.labels}
+                  cards={calendarFilteredCards}
+                  labels={allWorkspaceLabels}
+                  boardMetaByCardId={cardBoardMetaMap}
+                  showBoardBadge={workspace.boards.length > 1}
                   googleEvents={googleEvents}
                   draggedCardId={draggedCardId}
                   onDragStartCard={setDraggedCardId}
                   onDragEndCard={() => setDraggedCardId(null)}
-                  onSelectCard={(card) =>
-                    setCardModalState({
-                      isOpen: true,
-                      card,
-                      defaultListId: card.listId,
-                    })
-                  }
+                  onSelectCard={openEditCardModal}
                   onSelectGoogleEvent={setSelectedGoogleEvent}
                   onScheduleCardOnDay={handleScheduleCardOnDay}
-                  onCreateCardOnDay={(dateKey) =>
+                  onCreateCardOnDay={(dateKey) => {
+                    const preferredBoard =
+                      calendarBoardFilter !== 'all'
+                        ? workspace.boards.find((b) => b.id === calendarBoardFilter) ?? activeBoard
+                        : activeBoard;
                     setCardModalState({
                       isOpen: true,
                       card: null,
-                      defaultListId: board.lists[0]?.id ?? 'list-planned',
+                      boardId: preferredBoard.id,
+                      defaultListId: preferredBoard.state.lists[0]?.id ?? 'list-planned',
                       defaultStartDate: dateKey,
                       defaultEndDate: dateKey,
                       defaultAllDay: true,
-                    })
-                  }
+                    });
+                  }}
                 />
               )}
 
@@ -1695,34 +2064,55 @@ export default function App() {
                   anchorDate={anchorDate}
                   daysCount={timelineDaysCount}
                   groupBy={timelineGroupBy}
-                  cards={filteredCards}
-                  lists={board.lists}
-                  labels={board.labels}
+                  cards={calendarFilteredCards}
+                  lists={
+                    calendarBoardFilter === 'all'
+                      ? board.lists
+                      : (workspace.boards.find((b) => b.id === calendarBoardFilter)?.state.lists ??
+                          board.lists)
+                  }
+                  labels={allWorkspaceLabels}
+                  boards={workspace.boards}
+                  boardMetaByCardId={cardBoardMetaMap}
+                  showBoardBadge={workspace.boards.length > 1}
                   googleEvents={googleEvents}
                   draggedCardId={draggedCardId}
                   onDragStartCard={setDraggedCardId}
                   onDragEndCard={() => setDraggedCardId(null)}
-                  onSelectCard={(card) =>
-                    setCardModalState({
-                      isOpen: true,
-                      card,
-                      defaultListId: card.listId,
-                    })
-                  }
+                  onSelectCard={openEditCardModal}
                   onSelectGoogleEvent={setSelectedGoogleEvent}
                   onScheduleCardOnTimeline={handleScheduleCardOnTimeline}
                   onShiftCardDays={handleShiftCardDays}
-                  onCreateCardInLane={(dateKey, laneId, groupBy) =>
+                  onCreateCardInLane={(dateKey, laneId, groupBy) => {
+                    if (groupBy === 'board') {
+                      const laneBoard =
+                        workspace.boards.find((b) => b.id === laneId) ?? activeBoard;
+                      setCardModalState({
+                        isOpen: true,
+                        card: null,
+                        boardId: laneBoard.id,
+                        defaultListId: laneBoard.state.lists[0]?.id ?? 'list-planned',
+                        defaultStartDate: dateKey,
+                        defaultEndDate: dateKey,
+                        defaultAllDay: true,
+                      });
+                      return;
+                    }
+                    const preferredBoard =
+                      calendarBoardFilter !== 'all'
+                        ? workspace.boards.find((b) => b.id === calendarBoardFilter) ?? activeBoard
+                        : activeBoard;
                     setCardModalState({
                       isOpen: true,
                       card: null,
+                      boardId: preferredBoard.id,
                       defaultListId:
-                        groupBy === 'list' ? laneId : board.lists[0]?.id ?? 'list-planned',
+                        groupBy === 'list' ? laneId : preferredBoard.state.lists[0]?.id ?? 'list-planned',
                       defaultStartDate: dateKey,
                       defaultEndDate: dateKey,
                       defaultAllDay: true,
-                    })
-                  }
+                    });
+                  }}
                 />
               )}
             </>
@@ -1752,12 +2142,12 @@ export default function App() {
           <CardModal
             isOpen={cardModalState.isOpen}
             card={cardModalState.card}
+            boards={workspace.boards}
+            initialBoardId={cardModalState.boardId ?? activeBoard.id}
             defaultListId={cardModalState.defaultListId}
             defaultStartDate={cardModalState.defaultStartDate}
             defaultEndDate={cardModalState.defaultEndDate}
             defaultAllDay={cardModalState.defaultAllDay}
-            lists={board.lists}
-            labels={board.labels}
             isGoogleConnected={isGoogleConnected}
             targetCalendar={targetCalendar}
             onSave={handleSaveCard}
@@ -1804,15 +2194,10 @@ export default function App() {
           <QuickSearchModal
             isOpen={isQuickSearchOpen}
             onClose={() => setIsQuickSearchOpen(false)}
-            cards={board.cards}
-            labels={board.labels}
-            onSelectCard={(card) =>
-              setCardModalState({
-                isOpen: true,
-                card,
-                defaultListId: card.listId,
-              })
-            }
+            cards={allWorkspaceCards}
+            labels={allWorkspaceLabels}
+            boardMetaByCardId={cardBoardMetaMap}
+            onSelectCard={openEditCardModal}
           />
         )}
 
@@ -1820,6 +2205,8 @@ export default function App() {
           <EventDetailModal
             event={selectedGoogleEvent}
             lists={board.lists}
+            boards={workspace.boards}
+            initialBoardId={activeBoard.id}
             onClose={() => setSelectedGoogleEvent(null)}
             onImportAsCard={handleImportGoogleEventAsCard}
           />

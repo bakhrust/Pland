@@ -2,9 +2,16 @@ export type PlanSubView = 'board' | 'week' | 'month' | 'timeline';
 export type MainSection = 'plan' | 'habits' | 'notes' | 'finance' | 'sport';
 export type ViewMode = PlanSubView | 'habits' | 'notes' | 'finance' | 'sport';
 
-export type TimelineGroupBy = 'list' | 'label';
+export type TimelineGroupBy = 'list' | 'label' | 'board';
 
 export type LabelColor = 'blue' | 'emerald' | 'amber' | 'rose' | 'violet' | 'slate';
+
+export interface CardBoardMeta {
+  boardId: string;
+  boardTitle: string;
+  boardColor: LabelColor;
+  listTitle?: string;
+}
 
 export interface LabelDef {
   id: string;
@@ -172,4 +179,57 @@ export interface NotePage {
   blocks: NoteBlock[];
   updatedAtMs: number;
 }
+
+export type FinanceAccountType = 'card' | 'cash' | 'savings' | 'other';
+
+export interface FinanceAccount {
+  id: string;
+  title: string;
+  type: FinanceAccountType;
+  initialBalance: number;
+  color: LabelColor;
+  order: number;
+}
+
+export type FinanceCategoryKind = 'expense' | 'income';
+
+export interface FinanceCategory {
+  id: string;
+  name: string;
+  kind: FinanceCategoryKind;
+  /** Monthly spending limit in RUB for expense categories (null = unlimited) */
+  monthlyLimit: number | null;
+  color: LabelColor;
+  order: number;
+}
+
+export type FinanceTransactionKind = 'expense' | 'income' | 'transfer';
+
+export interface FinanceTransaction {
+  id: string;
+  kind: FinanceTransactionKind;
+  amount: number;
+  categoryId: string | null;
+  accountId: string;
+  /** Target account ID when kind === 'transfer', null otherwise */
+  toAccountId: string | null;
+  /** Date string in YYYY-MM-DD format */
+  date: string;
+  note: string;
+  /** Marks recurring monthly bills/income/subscriptions for quick repeat */
+  isRecurring: boolean;
+  createdAtMs: number;
+}
+
+export interface FinanceGoal {
+  id: string;
+  title: string;
+  targetAmount: number;
+  currentAmount: number;
+  /** Optional target date in YYYY-MM-DD format */
+  deadline: string | null;
+  color: LabelColor;
+  order: number;
+}
+
 

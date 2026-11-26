@@ -2,6 +2,8 @@ import { Calendar, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { useState } from 'react';
 import type {
   BoardList,
+  BoardRecord,
+  CardBoardMeta,
   CardItem,
   GoogleCalendarEvent,
   LabelDef,
@@ -24,6 +26,9 @@ interface TimelinePlannerViewProps {
   cards: CardItem[];
   lists: BoardList[];
   labels: LabelDef[];
+  boards?: BoardRecord[];
+  boardMetaByCardId?: Map<string, CardBoardMeta>;
+  showBoardBadge?: boolean;
   googleEvents: GoogleCalendarEvent[];
   draggedCardId: string | null;
   onDragStartCard: (cardId: string) => void;
@@ -42,6 +47,9 @@ export function TimelinePlannerView({
   cards,
   lists,
   labels,
+  boards = [],
+  boardMetaByCardId,
+  showBoardBadge = false,
   googleEvents,
   draggedCardId,
   onDragStartCard,
@@ -57,31 +65,41 @@ export function TimelinePlannerView({
   const today = new Date();
 
   const lanes: Array<{ id: string; title: string; subtitle: string; dotClass?: string }> =
-    groupBy === 'label'
-      ? [
-          ...labels.map((lbl) => ({
-            id: lbl.id,
-            title: lbl.name,
-            subtitle: `${cards.filter((c) => c.labelIds.includes(lbl.id)).length} задач`,
-            dotClass: LABEL_COLOR_META[lbl.color].dot,
-          })),
-          {
-            id: 'unlabeled',
-            title: 'Без метки',
-            subtitle: `${cards.filter((c) => c.labelIds.length === 0).length} задач`,
-          },
-        ]
-      : [...lists]
-          .sort((a, b) => a.order - b.order)
-          .map((l) => ({
-            id: l.id,
-            title: l.title,
-            subtitle: `${cards.filter((c) => c.listId === l.id).length} задач`,
-          }));
+    groupBy === 'board'
+      ? boards.map((b) => ({
+          id: b.id,
+          title: b.title,
+          subtitle: `${cards.filter((c) => boardMetaByCardId?.get(c.id)?.boardId === b.id).length} задач`,
+          dotClass: LABEL_COLOR_META[b.color]?.dot ?? 'bg-blue-600',
+        }))
+      : groupBy === 'label'
+        ? [
+            ...labels.map((lbl) => ({
+              id: lbl.id,
+              title: lbl.name,
+              subtitle: `${cards.filter((c) => c.labelIds.includes(lbl.id)).length} задач`,
+              dotClass: LABEL_COLOR_META[lbl.color].dot,
+            })),
+            {
+              id: 'unlabeled',
+              title: 'Без метки',
+              subtitle: `${cards.filter((c) => c.labelIds.length === 0).length} задач`,
+            },
+          ]
+        : [...lists]
+            .sort((a, b) => a.order - b.order)
+            .map((l) => ({
+              id: l.id,
+              title: l.title,
+              subtitle: `${cards.filter((c) => c.listId === l.id).length} задач`,
+            }));
 
   const getLaneCards = (laneId: string): CardItem[] => {
     return cards.filter((c) => {
       if (!c.startDate) return false;
+      if (groupBy === 'board') {
+        return boardMetaByCardId?.get(c.id)?.boardId === laneId;
+      }
       if (groupBy === 'label') {
         if (laneId === 'unlabeled') return c.labelIds.length === 0;
         return c.labelIds.includes(laneId);
@@ -105,7 +123,7 @@ export function TimelinePlannerView({
           style={{ gridTemplateColumns: dayColTemplate }}
         >
           <div className="px-3 md:px-4 py-2.5 border-r border-slate-200 text-xs font-semibold text-slate-700 sticky left-0 bg-slate-50 z-30 truncate">
-            {groupBy === 'label' ? 'Метки' : 'Колонки'}
+            {groupBy === 'board' ? 'Доски' : groupBy === 'label' ? 'Метки' : 'Колонки'}
           </div>
           {days.map((day) => {
             const key = toLocalDateKey(day);
@@ -231,6 +249,7 @@ export function TimelinePlannerView({
                       if (!span) return null;
                       const firstLbl = labels.find((l) => card.labelIds.includes(l.id));
                       const meta = firstLbl ? LABEL_COLOR_META[firstLbl.color] : LABEL_COLOR_META.blue;
+                      const boardMeta = boardMetaByCardId?.get(card.id);
 
                       const leftPct = (span.startIndex / days.length) * 100;
                       const widthPct = (span.spanDays / days.length) * 100;
@@ -259,9 +278,18 @@ export function TimelinePlannerView({
                             <button
                               type="button"
                               onClick={() => onSelectCard(card)}
-                              className={`text-xs font-medium truncate text-left flex-1 min-w-0 cursor-pointer ${meta.text}`}
+                              title={boardMeta ? `${boardMeta.boardTitle} · ${card.title}` : card.title}
+                              className={`text-xs font-medium text-left flex-1 min-w-0 cursor-pointer flex items-center gap-1.5 ${meta.text}`}
                             >
-                              {card.title}
+                              {showBoardBadge && groupBy !== 'board' && boardMeta && (
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-xs shrink-0 ${
+                                    LABEL_COLOR_META[boardMeta.boardColor]?.dot ?? 'bg-blue-600'
+                                  }`}
+                                  aria-hidden="true"
+                                />
+                              )}
+                              <span className="truncate">{card.title}</span>
                             </button>
 
                             <div className="hidden group-hover/bar:flex group-focus-within/bar:flex items-center gap-0.5 shrink-0">

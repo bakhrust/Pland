@@ -138,7 +138,7 @@ export function WorkspaceToolbar({
               >
                 <ListTodo className="w-3.5 h-3.5" aria-hidden="true" />
                 <span className="hidden sm:inline">
-                  {showBacklogSidebar ? 'Скрыть задачи доски' : 'Задачи доски'}
+                  {showBacklogSidebar ? 'Скрыть задачи' : 'Все задачи'}
                 </span>
                 <span className="sm:hidden">Задачи</span>
               </button>
@@ -182,6 +182,17 @@ export function WorkspaceToolbar({
                     aria-label="Группировка таймлайна"
                     className="flex items-center gap-1 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg ml-1"
                   >
+                    <button
+                      type="button"
+                      onClick={() => onChangeTimelineGroupBy('board')}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
+                        timelineGroupBy === 'board'
+                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      По доскам
+                    </button>
                     <button
                       type="button"
                       onClick={() => onChangeTimelineGroupBy('list')}
@@ -381,6 +392,15 @@ export function WorkspaceToolbar({
           {viewMode === 'timeline' && (
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => onChangeTimelineGroupBy('board')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md ${
+                    timelineGroupBy === 'board' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
+                  }`}
+                >
+                  По доскам
+                </button>
                 <button
                   type="button"
                   onClick={() => onChangeTimelineGroupBy('list')}

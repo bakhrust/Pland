@@ -13,6 +13,10 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import {
+  createInitialFinanceAccounts,
+  createInitialFinanceCategories,
+  createInitialFinanceGoals,
+  createInitialFinanceTransactions,
   createInitialHabits,
   createInitialNoteFolders,
   createInitialNotes,
@@ -24,6 +28,13 @@ import type {
   BoardState,
   CardItem,
   ChecklistItem,
+  FinanceAccount,
+  FinanceAccountType,
+  FinanceCategory,
+  FinanceCategoryKind,
+  FinanceGoal,
+  FinanceTransaction,
+  FinanceTransactionKind,
   HabitItem,
   LabelColor,
   LabelDef,
@@ -33,6 +44,12 @@ import type {
   NotePage,
   WorkspaceData,
 } from '../types/planner';
+import { toLocalDateKey } from '../utils/dateUtils';
+import {
+  FINANCE_ACCOUNT_TYPES,
+  FINANCE_TRANSACTION_KINDS,
+  roundMoney,
+} from '../utils/financeLogic';
 import { NOTE_BLOCK_TYPES } from '../utils/notesLogic';
 import { clampText, isValidEntityId } from '../utils/urlSafety';
 import { auth, db } from './firebaseClient';
@@ -276,6 +293,130 @@ function buildNoteFields(note: NotePage, ownerUid: string, order: number) {
   };
 }
 
+const VALID_FINANCE_ACCOUNT_TYPES = new Set<FinanceAccountType>(FINANCE_ACCOUNT_TYPES);
+const VALID_FINANCE_TX_KINDS = new Set<FinanceTransactionKind>(FINANCE_TRANSACTION_KINDS);
+
+function sanitizeDateKey(raw: unknown, fallback?: string): string {
+  if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return fallback ?? toLocalDateKey(new Date());
+}
+
+function buildFinanceAccountMutableFields(account: FinanceAccount, order: number) {
+  const safeBalance = roundMoney(Number(account.initialBalance) || 0);
+  return {
+    title: clampText(account.title.trim() || 'Счёт', 80),
+    type: VALID_FINANCE_ACCOUNT_TYPES.has(account.type) ? account.type : ('card' as const),
+    initialBalance: Math.max(-1_000_000_000, Math.min(1_000_000_000, safeBalance)),
+    color: sanitizeColor(account.color, 'blue'),
+    order: Math.max(0, Math.min(1000, Math.round(order))),
+  };
+}
+
+function buildFinanceAccountFields(account: FinanceAccount, ownerUid: string, order: number) {
+  return {
+    id: sanitizeId(account.id, 'acc', order),
+    ownerUid,
+    ...buildFinanceAccountMutableFields(account, order),
+  };
+}
+
+function buildFinanceCategoryMutableFields(cat: FinanceCategory, order: number) {
+  const kind: FinanceCategoryKind = cat.kind === 'income' ? 'income' : 'expense';
+  const rawLimit = typeof cat.monthlyLimit === 'number' ? roundMoney(cat.monthlyLimit) : null;
+  const monthlyLimit =
+    kind === 'expense' && rawLimit !== null && Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(1_000_000_000, rawLimit)
+      : null;
+  return {
+    name: clampText(cat.name.trim() || 'Категория', 80),
+    kind,
+    monthlyLimit,
+    color: sanitizeColor(cat.color, 'emerald'),
+    order: Math.max(0, Math.min(1000, Math.round(order))),
+  };
+}
+
+function buildFinanceCategoryFields(cat: FinanceCategory, ownerUid: string, order: number) {
+  return {
+    id: sanitizeId(cat.id, 'fcat', order),
+    ownerUid,
+    ...buildFinanceCategoryMutableFields(cat, order),
+  };
+}
+
+function buildFinanceTransactionMutableFields(tx: FinanceTransaction) {
+  const accountId = sanitizeId(tx.accountId, 'acc', 0);
+  const rawTo =
+    tx.toAccountId && isValidEntityId(tx.toAccountId) && tx.toAccountId !== accountId
+      ? tx.toAccountId
+      : null;
+  let kind: FinanceTransactionKind = VALID_FINANCE_TX_KINDS.has(tx.kind) ? tx.kind : 'expense';
+  if (kind === 'transfer' && !rawTo) {
+    kind = 'expense';
+  }
+  const amount = Math.max(
+    0.01,
+    Math.min(1_000_000_000, roundMoney(Math.abs(Number(tx.amount)) || 0.01))
+  );
+  return {
+    kind,
+    amount,
+    categoryId:
+      kind === 'transfer'
+        ? null
+        : tx.categoryId && isValidEntityId(tx.categoryId)
+        ? tx.categoryId
+        : null,
+    accountId,
+    toAccountId: kind === 'transfer' ? rawTo : null,
+    date: sanitizeDateKey(tx.date),
+    note: clampText(String(tx.note ?? ''), 300),
+    isRecurring: Boolean(tx.isRecurring),
+    createdAtMs:
+      typeof tx.createdAtMs === 'number' && Number.isFinite(tx.createdAtMs) && tx.createdAtMs >= 0
+        ? Math.round(tx.createdAtMs)
+        : Date.now(),
+  };
+}
+
+function buildFinanceTransactionFields(tx: FinanceTransaction, ownerUid: string, idx: number) {
+  return {
+    id: sanitizeId(tx.id, 'ftx', idx),
+    ownerUid,
+    ...buildFinanceTransactionMutableFields(tx),
+  };
+}
+
+function buildFinanceGoalMutableFields(goal: FinanceGoal, order: number) {
+  const targetAmount = Math.max(
+    1,
+    Math.min(1_000_000_000, roundMoney(Math.abs(Number(goal.targetAmount)) || 1))
+  );
+  const currentAmount = Math.max(
+    0,
+    Math.min(1_000_000_000, roundMoney(Number(goal.currentAmount) || 0))
+  );
+  const deadline =
+    goal.deadline && /^\d{4}-\d{2}-\d{2}$/.test(goal.deadline) ? goal.deadline : null;
+
+  return {
+    title: clampText(goal.title.trim() || 'Финансовая цель', 120),
+    targetAmount,
+    currentAmount,
+    deadline,
+    color: sanitizeColor(goal.color, 'emerald'),
+    order: Math.max(0, Math.min(1000, Math.round(order))),
+  };
+}
+
+function buildFinanceGoalFields(goal: FinanceGoal, ownerUid: string, order: number) {
+  return {
+    id: sanitizeId(goal.id, 'fgoal', order),
+    ownerUid,
+    ...buildFinanceGoalMutableFields(goal, order),
+  };
+}
+
 const LEGACY_WORKSPACE_KEY = 'pland_workspace_v1';
 const LEGACY_BOARD_KEY = 'pland_board_v1';
 const LEGACY_GCAL_PREFS_KEY = 'pland_gcal_prefs_v1';
@@ -342,6 +483,10 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   habits: HabitItem[];
   noteFolders: NoteFolder[];
   notes: NotePage[];
+  financeAccounts: FinanceAccount[];
+  financeCategories: FinanceCategory[];
+  financeTransactions: FinanceTransaction[];
+  financeGoals: FinanceGoal[];
   visibleCalendarIds: string[];
   targetCalendarId: string;
   theme: 'light' | 'dark';
@@ -386,6 +531,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         targetCalendarId: legacy.targetCalendarId || 'primary',
         theme: 'light',
         notesSeeded: true,
+        financeSeeded: true,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -477,11 +623,60 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
       handleFirestoreError(err, OperationType.CREATE, `${foldersPath}|${notesPath}`);
     }
 
+    // 5. Seed starter finance accounts, categories, transactions & goals
+    const seedFinanceAccounts = createInitialFinanceAccounts();
+    const seedFinanceCategories = createInitialFinanceCategories();
+    const seedFinanceTransactions = createInitialFinanceTransactions(new Date());
+    const seedFinanceGoals = createInitialFinanceGoals();
+    const financePath = `users/${uid}/financeTransactions`;
+    try {
+      const financeBatch = writeBatch(db);
+      seedFinanceAccounts.forEach((acc, idx) => {
+        const fields = buildFinanceAccountFields(acc, uid, idx);
+        financeBatch.set(doc(db, 'users', uid, 'financeAccounts', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedFinanceCategories.forEach((cat, idx) => {
+        const fields = buildFinanceCategoryFields(cat, uid, idx);
+        financeBatch.set(doc(db, 'users', uid, 'financeCategories', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedFinanceTransactions.forEach((tx, idx) => {
+        const fields = buildFinanceTransactionFields(tx, uid, idx);
+        financeBatch.set(doc(db, 'users', uid, 'financeTransactions', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedFinanceGoals.forEach((goal, idx) => {
+        const fields = buildFinanceGoalFields(goal, uid, idx);
+        financeBatch.set(doc(db, 'users', uid, 'financeGoals', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await financeBatch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, financePath);
+    }
+
     return {
       workspace: seed,
       habits: seedHabits,
       noteFolders: seedNoteFolders,
       notes: seedNotes,
+      financeAccounts: seedFinanceAccounts,
+      financeCategories: seedFinanceCategories,
+      financeTransactions: seedFinanceTransactions,
+      financeGoals: seedFinanceGoals,
       visibleCalendarIds: legacy.visibleCalendarIds,
       targetCalendarId: legacy.targetCalendarId || 'primary',
       theme: 'light',
@@ -660,6 +855,177 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
     }
   }
 
+  // Load finance collections for existing user
+  const finAccountsPath = `users/${uid}/financeAccounts`;
+  const finCategoriesPath = `users/${uid}/financeCategories`;
+  const finTransactionsPath = `users/${uid}/financeTransactions`;
+  const finGoalsPath = `users/${uid}/financeGoals`;
+
+  let finAccountSnaps;
+  try {
+    finAccountSnaps = await getDocs(
+      query(collection(db, 'users', uid, 'financeAccounts'), where('ownerUid', '==', uid))
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, finAccountsPath);
+  }
+
+  let finCategorySnaps;
+  try {
+    finCategorySnaps = await getDocs(
+      query(collection(db, 'users', uid, 'financeCategories'), where('ownerUid', '==', uid))
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, finCategoriesPath);
+  }
+
+  let finTransactionSnaps;
+  try {
+    finTransactionSnaps = await getDocs(
+      query(collection(db, 'users', uid, 'financeTransactions'), where('ownerUid', '==', uid))
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, finTransactionsPath);
+  }
+
+  let finGoalSnaps;
+  try {
+    finGoalSnaps = await getDocs(
+      query(collection(db, 'users', uid, 'financeGoals'), where('ownerUid', '==', uid))
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, finGoalsPath);
+  }
+
+  let financeAccounts: FinanceAccount[] = finAccountSnaps.docs
+    .map((dDoc) => {
+      const d = dDoc.data();
+      return {
+        id: String(d.id),
+        title: String(d.title ?? 'Счёт'),
+        type: VALID_FINANCE_ACCOUNT_TYPES.has(d.type as FinanceAccountType)
+          ? (d.type as FinanceAccountType)
+          : 'card',
+        initialBalance: Number(d.initialBalance ?? 0),
+        color: sanitizeColor(d.color, 'blue'),
+        order: Number(d.order ?? 0),
+      };
+    })
+    .sort((a, b) => a.order - b.order);
+
+  let financeCategories: FinanceCategory[] = finCategorySnaps.docs
+    .map((cDoc) => {
+      const d = cDoc.data();
+      const kind: FinanceCategoryKind = d.kind === 'income' ? 'income' : 'expense';
+      return {
+        id: String(d.id),
+        name: String(d.name ?? 'Категория'),
+        kind,
+        monthlyLimit: typeof d.monthlyLimit === 'number' && d.monthlyLimit > 0 ? d.monthlyLimit : null,
+        color: sanitizeColor(d.color, 'emerald'),
+        order: Number(d.order ?? 0),
+      };
+    })
+    .sort((a, b) => a.order - b.order);
+
+  let financeTransactions: FinanceTransaction[] = finTransactionSnaps.docs
+    .map((tDoc) => {
+      const d = tDoc.data();
+      return {
+        id: String(d.id),
+        kind: VALID_FINANCE_TX_KINDS.has(d.kind as FinanceTransactionKind)
+          ? (d.kind as FinanceTransactionKind)
+          : 'expense',
+        amount: Math.max(0.01, Number(d.amount ?? 0.01)),
+        categoryId: typeof d.categoryId === 'string' && d.categoryId ? d.categoryId : null,
+        accountId: String(d.accountId ?? ''),
+        toAccountId: typeof d.toAccountId === 'string' && d.toAccountId ? d.toAccountId : null,
+        date: sanitizeDateKey(d.date),
+        note: String(d.note ?? ''),
+        isRecurring: Boolean(d.isRecurring),
+        createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : Date.now(),
+      };
+    })
+    .sort((a, b) => {
+      if (b.date !== a.date) return b.date.localeCompare(a.date);
+      return b.createdAtMs - a.createdAtMs;
+    });
+
+  let financeGoals: FinanceGoal[] = finGoalSnaps.docs
+    .map((gDoc) => {
+      const d = gDoc.data();
+      return {
+        id: String(d.id),
+        title: String(d.title ?? 'Цель'),
+        targetAmount: Math.max(1, Number(d.targetAmount ?? 1)),
+        currentAmount: Math.max(0, Number(d.currentAmount ?? 0)),
+        deadline: typeof d.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.deadline) ? d.deadline : null,
+        color: sanitizeColor(d.color, 'emerald'),
+        order: Number(d.order ?? 0),
+      };
+    })
+    .sort((a, b) => a.order - b.order);
+
+  if (
+    userSnap.exists() &&
+    !userData.financeSeeded &&
+    financeAccounts.length === 0 &&
+    financeCategories.length === 0 &&
+    financeTransactions.length === 0 &&
+    financeGoals.length === 0
+  ) {
+    const seedAccounts = createInitialFinanceAccounts();
+    const seedCategories = createInitialFinanceCategories();
+    const seedTransactions = createInitialFinanceTransactions(new Date());
+    const seedGoals = createInitialFinanceGoals();
+    try {
+      const seedBatch = writeBatch(db);
+      seedAccounts.forEach((acc, idx) => {
+        const fields = buildFinanceAccountFields(acc, uid, idx);
+        seedBatch.set(doc(db, 'users', uid, 'financeAccounts', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedCategories.forEach((cat, idx) => {
+        const fields = buildFinanceCategoryFields(cat, uid, idx);
+        seedBatch.set(doc(db, 'users', uid, 'financeCategories', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedTransactions.forEach((tx, idx) => {
+        const fields = buildFinanceTransactionFields(tx, uid, idx);
+        seedBatch.set(doc(db, 'users', uid, 'financeTransactions', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedGoals.forEach((goal, idx) => {
+        const fields = buildFinanceGoalFields(goal, uid, idx);
+        seedBatch.set(doc(db, 'users', uid, 'financeGoals', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      seedBatch.update(doc(db, 'users', uid), {
+        financeSeeded: true,
+        updatedAt: serverTimestamp(),
+      });
+      await seedBatch.commit();
+      financeAccounts = seedAccounts;
+      financeCategories = seedCategories;
+      financeTransactions = seedTransactions;
+      financeGoals = seedGoals;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, finTransactionsPath);
+    }
+  }
+
   const savedActiveBoardId = typeof userData.activeBoardId === 'string' ? userData.activeBoardId : '';
   const activeBoardId = boards.some((b) => b.id === savedActiveBoardId)
     ? savedActiveBoardId
@@ -674,6 +1040,10 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
     habits,
     noteFolders,
     notes,
+    financeAccounts,
+    financeCategories,
+    financeTransactions,
+    financeGoals,
     visibleCalendarIds: Array.isArray(userData.visibleCalendarIds)
       ? (userData.visibleCalendarIds as string[])
       : [],
@@ -1008,4 +1378,217 @@ export async function syncNotesChangesToFirestore(
     }
   }
 }
+
+export async function syncFinanceAccountsChangesToFirestore(
+  uid: string,
+  prevAccounts: FinanceAccount[],
+  nextAccounts: FinanceAccount[]
+): Promise<void> {
+  const prevMap = new Map(prevAccounts.map((a, idx) => [a.id, { item: a, order: idx }]));
+  const nextMap = new Map(nextAccounts.map((a, idx) => [a.id, { item: a, order: idx }]));
+
+  for (const [id] of prevMap) {
+    if (!nextMap.has(id)) {
+      const path = `users/${uid}/financeAccounts/${id}`;
+      try {
+        await deleteDoc(doc(db, 'users', uid, 'financeAccounts', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    }
+  }
+
+  for (const [id, { item, order }] of nextMap) {
+    const prevEntry = prevMap.get(id);
+    const path = `users/${uid}/financeAccounts/${id}`;
+    if (!prevEntry) {
+      const fields = buildFinanceAccountFields(item, uid, order);
+      try {
+        await setDoc(doc(db, 'users', uid, 'financeAccounts', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    } else if (
+      prevEntry.order !== order ||
+      JSON.stringify(prevEntry.item) !== JSON.stringify(item)
+    ) {
+      const mutable = buildFinanceAccountMutableFields(item, order);
+      try {
+        await updateDoc(doc(db, 'users', uid, 'financeAccounts', id), {
+          ...mutable,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, path);
+      }
+    }
+  }
+}
+
+export async function syncFinanceCategoriesChangesToFirestore(
+  uid: string,
+  prevCategories: FinanceCategory[],
+  nextCategories: FinanceCategory[]
+): Promise<void> {
+  const prevMap = new Map(prevCategories.map((c, idx) => [c.id, { item: c, order: idx }]));
+  const nextMap = new Map(nextCategories.map((c, idx) => [c.id, { item: c, order: idx }]));
+
+  for (const [id] of prevMap) {
+    if (!nextMap.has(id)) {
+      const path = `users/${uid}/financeCategories/${id}`;
+      try {
+        await deleteDoc(doc(db, 'users', uid, 'financeCategories', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    }
+  }
+
+  for (const [id, { item, order }] of nextMap) {
+    const prevEntry = prevMap.get(id);
+    const path = `users/${uid}/financeCategories/${id}`;
+    if (!prevEntry) {
+      const fields = buildFinanceCategoryFields(item, uid, order);
+      try {
+        await setDoc(doc(db, 'users', uid, 'financeCategories', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    } else if (
+      prevEntry.order !== order ||
+      JSON.stringify(prevEntry.item) !== JSON.stringify(item)
+    ) {
+      const mutable = buildFinanceCategoryMutableFields(item, order);
+      const onlyLimitChanged =
+        prevEntry.order === order &&
+        prevEntry.item.name === item.name &&
+        prevEntry.item.kind === item.kind &&
+        prevEntry.item.color === item.color;
+      try {
+        await updateDoc(
+          doc(db, 'users', uid, 'financeCategories', id),
+          onlyLimitChanged
+            ? { monthlyLimit: mutable.monthlyLimit, updatedAt: serverTimestamp() }
+            : { ...mutable, updatedAt: serverTimestamp() }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, path);
+      }
+    }
+  }
+}
+
+export async function syncFinanceTransactionsChangesToFirestore(
+  uid: string,
+  prevTransactions: FinanceTransaction[],
+  nextTransactions: FinanceTransaction[]
+): Promise<void> {
+  const prevMap = new Map(prevTransactions.map((t) => [t.id, t]));
+  const nextMap = new Map(nextTransactions.map((t, idx) => [t.id, { item: t, idx }]));
+
+  for (const [id] of prevMap) {
+    if (!nextMap.has(id)) {
+      const path = `users/${uid}/financeTransactions/${id}`;
+      try {
+        await deleteDoc(doc(db, 'users', uid, 'financeTransactions', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    }
+  }
+
+  for (const [id, { item, idx }] of nextMap) {
+    const prevItem = prevMap.get(id);
+    const path = `users/${uid}/financeTransactions/${id}`;
+    if (!prevItem) {
+      const fields = buildFinanceTransactionFields(item, uid, idx);
+      try {
+        await setDoc(doc(db, 'users', uid, 'financeTransactions', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    } else if (JSON.stringify(prevItem) !== JSON.stringify(item)) {
+      const mutable = buildFinanceTransactionMutableFields(item);
+      try {
+        await updateDoc(doc(db, 'users', uid, 'financeTransactions', id), {
+          ...mutable,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, path);
+      }
+    }
+  }
+}
+
+export async function syncFinanceGoalsChangesToFirestore(
+  uid: string,
+  prevGoals: FinanceGoal[],
+  nextGoals: FinanceGoal[]
+): Promise<void> {
+  const prevMap = new Map(prevGoals.map((g, idx) => [g.id, { item: g, order: idx }]));
+  const nextMap = new Map(nextGoals.map((g, idx) => [g.id, { item: g, order: idx }]));
+
+  for (const [id] of prevMap) {
+    if (!nextMap.has(id)) {
+      const path = `users/${uid}/financeGoals/${id}`;
+      try {
+        await deleteDoc(doc(db, 'users', uid, 'financeGoals', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    }
+  }
+
+  for (const [id, { item, order }] of nextMap) {
+    const prevEntry = prevMap.get(id);
+    const path = `users/${uid}/financeGoals/${id}`;
+    if (!prevEntry) {
+      const fields = buildFinanceGoalFields(item, uid, order);
+      try {
+        await setDoc(doc(db, 'users', uid, 'financeGoals', fields.id), {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    } else if (
+      prevEntry.order !== order ||
+      JSON.stringify(prevEntry.item) !== JSON.stringify(item)
+    ) {
+      const mutable = buildFinanceGoalMutableFields(item, order);
+      const onlyCurrentChanged =
+        prevEntry.order === order &&
+        prevEntry.item.title === item.title &&
+        prevEntry.item.targetAmount === item.targetAmount &&
+        prevEntry.item.deadline === item.deadline &&
+        prevEntry.item.color === item.color;
+      try {
+        await updateDoc(
+          doc(db, 'users', uid, 'financeGoals', id),
+          onlyCurrentChanged
+            ? { currentAmount: mutable.currentAmount, updatedAt: serverTimestamp() }
+            : { ...mutable, updatedAt: serverTimestamp() }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, path);
+      }
+    }
+  }
+}
+
 

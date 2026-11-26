@@ -1,4 +1,4 @@
-import { CalendarClock, CheckSquare, Plus, Trash2 } from 'lucide-react';
+import { CalendarClock, CalendarPlus, CheckSquare, Plus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import type { BoardList, CardItem, LabelDef } from '../types/planner';
 import { getCardDueStatus, getChecklistProgress, isCardInListDone } from '../utils/boardLogic';
@@ -10,6 +10,7 @@ interface KanbanBoardProps {
   cards: CardItem[];
   labels: LabelDef[];
   onSelectCard: (card: CardItem) => void;
+  onQuickScheduleToday?: (card: CardItem) => void;
   onAddCard: (listId: string, title: string) => void;
   onMoveCard: (cardId: string, targetListId: string, targetIndex?: number) => void;
   onAddList: (title: string) => void;
@@ -22,6 +23,7 @@ export function KanbanBoard({
   cards,
   labels,
   onSelectCard,
+  onQuickScheduleToday,
   onAddCard,
   onMoveCard,
   onAddList,
@@ -313,6 +315,20 @@ export function KanbanBoard({
                             </div>
                           )}
                         </button>
+
+                        {!card.startDate && onQuickScheduleToday && (
+                          <div className="px-3 py-1.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end">
+                            <button
+                              type="button"
+                              data-testid={`kanban-schedule-today-${card.id}`}
+                              onClick={() => onQuickScheduleToday(card)}
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 cursor-pointer"
+                            >
+                              <CalendarPlus className="w-3 h-3" aria-hidden="true" />
+                              <span>На календарь</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })

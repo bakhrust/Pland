@@ -1,6 +1,6 @@
 import { Calendar, Minus, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { CardItem, GoogleCalendarEvent, LabelDef } from '../types/planner';
+import type { CardBoardMeta, CardItem, GoogleCalendarEvent, LabelDef } from '../types/planner';
 import {
   extractDateKey,
   formatRussianShortDate,
@@ -22,6 +22,8 @@ interface WeekPlannerViewProps {
   anchorDate: Date;
   cards: CardItem[];
   labels: LabelDef[];
+  boardMetaByCardId?: Map<string, CardBoardMeta>;
+  showBoardBadge?: boolean;
   googleEvents: GoogleCalendarEvent[];
   draggedCardId: string | null;
   onDragStartCard: (cardId: string) => void;
@@ -42,6 +44,8 @@ export function WeekPlannerView({
   anchorDate,
   cards,
   labels,
+  boardMetaByCardId,
+  showBoardBadge = false,
   googleEvents,
   draggedCardId,
   onDragStartCard,
@@ -188,6 +192,7 @@ export function WeekPlannerView({
             const c = pos.item.card;
             const firstLbl = labels.find((l) => c.labelIds.includes(l.id));
             const meta = firstLbl ? LABEL_COLOR_META[firstLbl.color] : LABEL_COLOR_META.blue;
+            const boardMeta = boardMetaByCardId?.get(c.id);
             const isBeingDragged = draggedCardId === c.id;
 
             return (
@@ -214,19 +219,31 @@ export function WeekPlannerView({
                   <button
                     type="button"
                     onClick={() => onSelectCard(c)}
+                    title={boardMeta ? `${boardMeta.boardTitle} · ${c.title}` : c.title}
                     className="w-full flex-1 min-h-0 text-left px-2 py-1 cursor-pointer hover:brightness-98 focus-visible:outline-2 focus-visible:outline-blue-600 flex flex-col justify-between"
                   >
                     <div className="min-w-0">
                       <div className={`text-[11px] font-semibold leading-tight truncate ${meta.text}`}>
                         {c.title}
                       </div>
-                      <div className="font-mono text-[10px] tabular-nums text-slate-600 mt-0.5 flex items-center gap-1">
-                        <span>
+                      <div className="font-mono text-[10px] tabular-nums text-slate-600 mt-0.5 flex items-center gap-1 min-w-0">
+                        <span className="shrink-0">
                           {formatTimeHHMM(c.startDate!)}
                           {c.endDate ? `–${formatTimeHHMM(c.endDate)}` : ''}
                         </span>
+                        {showBoardBadge && boardMeta && (
+                          <span className="inline-flex items-center gap-1 min-w-0 font-sans text-[10px] text-slate-600 truncate">
+                            <span
+                              className={`w-1.5 h-1.5 rounded-xs shrink-0 ${
+                                LABEL_COLOR_META[boardMeta.boardColor]?.dot ?? 'bg-blue-600'
+                              }`}
+                              aria-hidden="true"
+                            />
+                            <span className="truncate">{boardMeta.boardTitle}</span>
+                          </span>
+                        )}
                         {c.googleEventId && !c.syncDirty && (
-                          <span className="text-emerald-700 font-sans font-medium">· G</span>
+                          <span className="text-emerald-700 font-sans font-medium shrink-0">· G</span>
                         )}
                       </div>
                     </div>
@@ -389,14 +406,24 @@ export function WeekPlannerView({
               {dayAllDayCards.map((card) => {
                 const firstLbl = labels.find((l) => card.labelIds.includes(l.id));
                 const meta = firstLbl ? LABEL_COLOR_META[firstLbl.color] : LABEL_COLOR_META.blue;
+                const boardMeta = boardMetaByCardId?.get(card.id);
                 return (
                   <button
                     key={card.id}
                     type="button"
                     onClick={() => onSelectCard(card)}
-                    className={`w-full text-left px-1.5 py-0.5 text-[11px] font-medium rounded border truncate cursor-pointer ${meta.blockBg} ${meta.blockBorder} ${meta.text}`}
+                    title={boardMeta ? `${boardMeta.boardTitle} · ${card.title}` : card.title}
+                    className={`w-full text-left px-1.5 py-0.5 text-[11px] font-medium rounded border cursor-pointer flex items-center gap-1 min-w-0 ${meta.blockBg} ${meta.blockBorder} ${meta.text}`}
                   >
-                    {card.title}
+                    {showBoardBadge && boardMeta && (
+                      <span
+                        className={`w-1.5 h-1.5 rounded-xs shrink-0 ${
+                          LABEL_COLOR_META[boardMeta.boardColor]?.dot ?? 'bg-blue-600'
+                        }`}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <span className="truncate">{card.title}</span>
                   </button>
                 );
               })}

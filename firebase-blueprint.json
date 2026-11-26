@@ -42,6 +42,9 @@
         "notesSeeded": {
           "type": "boolean"
         },
+        "financeSeeded": {
+          "type": "boolean"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -409,6 +412,260 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "FinanceAccountDoc": {
+      "title": "FinanceAccountDoc",
+      "description": "A personal finance account or wallet owned by a user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "type": {
+          "type": "string",
+          "enum": ["card", "cash", "savings", "other"]
+        },
+        "initialBalance": {
+          "type": "number"
+        },
+        "color": {
+          "type": "string",
+          "enum": ["blue", "emerald", "violet", "amber", "rose"]
+        },
+        "order": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "title",
+        "type",
+        "initialBalance",
+        "color",
+        "order",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FinanceCategoryDoc": {
+      "title": "FinanceCategoryDoc",
+      "description": "A personal budget category with an optional monthly spending limit.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["expense", "income"]
+        },
+        "monthlyLimit": {
+          "type": ["number", "null"]
+        },
+        "color": {
+          "type": "string",
+          "enum": ["blue", "emerald", "violet", "amber", "rose"]
+        },
+        "order": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "name",
+        "kind",
+        "monthlyLimit",
+        "color",
+        "order",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FinanceTransactionDoc": {
+      "title": "FinanceTransactionDoc",
+      "description": "A personal finance expense, income, or account transfer entry.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["expense", "income", "transfer"]
+        },
+        "amount": {
+          "type": "number"
+        },
+        "categoryId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "toAccountId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "isRecurring": {
+          "type": "boolean"
+        },
+        "createdAtMs": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "kind",
+        "amount",
+        "categoryId",
+        "accountId",
+        "toAccountId",
+        "date",
+        "note",
+        "isRecurring",
+        "createdAtMs",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FinanceGoalDoc": {
+      "title": "FinanceGoalDoc",
+      "description": "A personal savings target / financial goal owned by a user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "targetAmount": {
+          "type": "number"
+        },
+        "currentAmount": {
+          "type": "number"
+        },
+        "deadline": {
+          "type": ["string", "null"],
+          "maxLength": 10
+        },
+        "color": {
+          "type": "string",
+          "enum": ["blue", "emerald", "violet", "amber", "rose"]
+        },
+        "order": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "title",
+        "targetAmount",
+        "currentAmount",
+        "deadline",
+        "color",
+        "order",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -435,6 +692,22 @@
     "/users/{userId}/notes/{noteId}": {
       "schema": { "$ref": "#/entities/NoteDoc" },
       "description": "User-owned Notion-style pages with bounded typed content blocks."
+    },
+    "/users/{userId}/financeAccounts/{accountId}": {
+      "schema": { "$ref": "#/entities/FinanceAccountDoc" },
+      "description": "User-owned financial accounts and wallets."
+    },
+    "/users/{userId}/financeCategories/{categoryId}": {
+      "schema": { "$ref": "#/entities/FinanceCategoryDoc" },
+      "description": "User-owned budget categories with optional monthly spending limits."
+    },
+    "/users/{userId}/financeTransactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/FinanceTransactionDoc" },
+      "description": "User-owned income, expense, and account transfer ledger records."
+    },
+    "/users/{userId}/financeGoals/{goalId}": {
+      "schema": { "$ref": "#/entities/FinanceGoalDoc" },
+      "description": "User-owned personal savings targets."
     }
   }
 }

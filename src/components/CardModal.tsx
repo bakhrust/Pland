@@ -1,6 +1,6 @@
 import { Calendar, Check, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { BoardList, CardItem, ChecklistItem, GoogleCalendarMeta, LabelDef } from '../types/planner';
+import type { BoardRecord, CardItem, ChecklistItem, GoogleCalendarMeta } from '../types/planner';
 import { getChecklistProgress } from '../utils/boardLogic';
 import { extractDateKey, toLocalDateKey } from '../utils/dateUtils';
 import { LABEL_COLOR_META } from '../utils/labelStyles';
@@ -8,16 +8,16 @@ import { LABEL_COLOR_META } from '../utils/labelStyles';
 interface CardModalProps {
   isOpen: boolean;
   card: CardItem | null; // null when creating a new card
+  boards: BoardRecord[];
+  initialBoardId: string;
   defaultListId: string;
   defaultStartDate?: string | null;
   defaultEndDate?: string | null;
   defaultAllDay?: boolean;
-  lists: BoardList[];
-  labels: LabelDef[];
   isGoogleConnected: boolean;
   targetCalendar: GoogleCalendarMeta | null;
-  onSave: (saved: CardItem, isNew: boolean) => void;
-  onDelete: (cardId: string) => void;
+  onSave: (saved: CardItem, isNew: boolean, targetBoardId: string) => void;
+  onDelete: (cardId: string, boardId: string) => void;
   onClose: () => void;
   onRequestGoogleCreateOrUpdate: (card: CardItem) => void;
   onRequestGoogleDelete: (card: CardItem) => void;
@@ -27,12 +27,12 @@ interface CardModalProps {
 export function CardModal({
   isOpen,
   card,
+  boards,
+  initialBoardId,
   defaultListId,
   defaultStartDate = null,
   defaultEndDate = null,
   defaultAllDay = false,
-  lists,
-  labels,
   isGoogleConnected,
   targetCalendar,
   onSave,
@@ -43,6 +43,8 @@ export function CardModal({
   onOpenGoogleDrawer,
 }: CardModalProps) {
   const isNew = !card;
+
+  const [boardId, setBoardId] = useState(initialBoardId);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -60,10 +62,15 @@ export function CardModal({
   const [dueDate, setDueDate] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
+  const selectedBoard = boards.find((b) => b.id === boardId) ?? boards[0];
+  const lists = selectedBoard?.state.lists ?? [];
+  const labels = selectedBoard?.state.labels ?? [];
+
   useEffect(() => {
     if (!isOpen) return;
     setErrorMsg('');
     setNewCheckText('');
+    setBoardId(initialBoardId);
 
     const todayKey = toLocalDateKey(new Date());
 
@@ -127,9 +134,21 @@ export function CardModal({
         setEndDateTime(`${todayKey}T11:00`);
       }
     }
-  }, [isOpen, card, defaultListId, defaultStartDate, defaultEndDate, defaultAllDay]);
+  }, [isOpen, card, initialBoardId, defaultListId, defaultStartDate, defaultEndDate, defaultAllDay]);
 
   if (!isOpen) return null;
+
+  const handleBoardChange = (nextBoardId: string) => {
+    setBoardId(nextBoardId);
+    const nextBoard = boards.find((b) => b.id === nextBoardId);
+    if (!nextBoard) return;
+    const nextLists = [...nextBoard.state.lists].sort((a, b) => a.order - b.order);
+    if (!nextLists.some((l) => l.id === listId)) {
+      setListId(nextLists[0]?.id ?? '');
+    }
+    const validLabelIds = new Set(nextBoard.state.labels.map((l) => l.id));
+    setLabelIds((prev) => prev.filter((id) => validLabelIds.has(id)));
+  };
 
   const toggleLabel = (id: string) => {
     setLabelIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -208,7 +227,7 @@ export function CardModal({
     e.preventDefault();
     const draft = buildDraftCard();
     if (!draft) return;
-    onSave(draft, isNew);
+    onSave(draft, isNew, boardId);
   };
 
   const chkProgress = getChecklistProgress(checklist);
@@ -247,9 +266,9 @@ export function CardModal({
               </div>
             )}
 
-            {/* Title & List */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="sm:col-span-2">
+            {/* Title, Board & List */}
+            <div className="space-y-3">
+              <div>
                 <label htmlFor="card-title-input" className="block text-xs font-medium text-slate-700 mb-1">
                   Название
                 </label>
@@ -265,24 +284,48 @@ export function CardModal({
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
                 />
               </div>
-              <div>
-                <label htmlFor="card-list-select" className="block text-xs font-medium text-slate-700 mb-1">
-                  Колонка
-                </label>
-                <select
-                  id="card-list-select"
-                  value={listId}
-                  onChange={(e) => setListId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-600"
-                >
-                  {[...lists]
-                    .sort((a, b) => a.order - b.order)
-                    .map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.title}
-                      </option>
-                    ))}
-                </select>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {boards.length > 0 && (
+                  <div>
+                    <label htmlFor="card-board-select" className="block text-xs font-medium text-slate-700 mb-1">
+                      Доска
+                    </label>
+                    <select
+                      id="card-board-select"
+                      data-testid="card-board-select"
+                      value={boardId}
+                      onChange={(e) => handleBoardChange(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-600 cursor-pointer"
+                    >
+                      {boards.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label htmlFor="card-list-select" className="block text-xs font-medium text-slate-700 mb-1">
+                    Колонка
+                  </label>
+                  <select
+                    id="card-list-select"
+                    value={listId}
+                    onChange={(e) => setListId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-600 cursor-pointer"
+                  >
+                    {[...lists]
+                      .sort((a, b) => a.order - b.order)
+                      .map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.title}
+                        </option>
+                      ))}
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -589,7 +632,7 @@ export function CardModal({
             {!isNew && card ? (
               <button
                 type="button"
-                onClick={() => onDelete(card.id)}
+                onClick={() => onDelete(card.id, boardId)}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />

@@ -13,12 +13,19 @@ import {
   adjustCardDurationMinutes,
   buildGoogleEventPayload,
   deleteBoardFromWorkspace,
+  deleteCardInWorkspace,
   filterCards,
+  findCardInWorkspace,
+  getAllWorkspaceCards,
+  getCardBoardMetaMap,
   getCardsPendingGoogleSync,
+  getWorkspaceLabels,
   moveCardInBoard,
   renameBoardInWorkspace,
+  saveCardInWorkspace,
   scheduleCardAtSlot,
   shiftCardDatesByDays,
+  updateCardInWorkspace,
 } from './boardLogic';
 import { createInitialNoteFolders, createInitialNotes, createInitialWorkspaceData } from '../data/seedData';
 import type { CardItem, HabitItem, NoteBlock } from '../types/planner';
@@ -46,6 +53,21 @@ import {
   resolveNoteLinks,
   sanitizeMarkdownFilename,
 } from './notesLogic';
+import {
+  applyGoalContribution,
+  computeAccountBalances,
+  computeCategoryBudgetProgress,
+  computeDailyExpenseSeries,
+  computeMonthlyFinanceSummary,
+  computeMonthlyTrendSeries,
+  createFinanceAccount,
+  createFinanceCategory,
+  createFinanceGoal,
+  createFinanceTransaction,
+  filterFinanceTransactions,
+  financeTransactionsToCsv,
+  getRecurringSuggestionsForMonth,
+} from './financeLogic';
 
 const makeCard = (overrides: Partial<CardItem> = {}): CardItem => ({
   id: 'c1',
@@ -431,3 +453,268 @@ test('notesLogic exports Obsidian-compatible Markdown and valid ZIP archive', as
   assert.equal(bytes[eocdOffset + 2], 0x05);
   assert.equal(bytes[eocdOffset + 3], 0x06);
 });
+
+test('cross-board workspace helpers schedule, create, move, and delete cards across all boards', () => {
+  const ws0 = createInitialWorkspaceData(new Date('2026-11-24T10:00:00'));
+  const workBoard = ws0.boards[0];
+  const personalBoard = ws0.boards[1];
+
+  const allCards = getAllWorkspaceCards(ws0, 'all');
+  assert.equal(allCards.length, workBoard.state.cards.length + personalBoard.state.cards.length);
+  assert.equal(getAllWorkspaceCards(ws0, personalBoard.id).length, personalBoard.state.cards.length);
+
+  const allLabels = getWorkspaceLabels(ws0);
+  assert.ok(allLabels.some((l) => l.id === 'lbl-p-life'));
+  assert.ok(allLabels.some((l) => l.id === 'lbl-design'));
+
+  const personalCard = personalBoard.state.cards[0];
+  const metaMap = getCardBoardMetaMap(ws0);
+  assert.equal(metaMap.get(personalCard.id)?.boardId, personalBoard.id);
+  assert.equal(metaMap.get(personalCard.id)?.boardTitle, personalBoard.title);
+
+  const found = findCardInWorkspace(ws0, personalCard.id);
+  assert.equal(found?.board.id, personalBoard.id);
+
+  // Schedule a card belonging to the non-active (personal) board
+  const wsScheduled = updateCardInWorkspace(ws0, personalCard.id, (c) =>
+    scheduleCardAtSlot(c, '2026-11-25', 14, 60)
+  );
+  const updatedPersonal = findCardInWorkspace(wsScheduled, personalCard.id);
+  assert.equal(updatedPersonal?.card.startDate, '2026-11-25T14:00');
+  assert.equal(updatedPersonal?.board.id, personalBoard.id);
+
+  // Create a new scheduled card directly on the secondary board
+  const newCard = makeCard({
+    id: 'card-cross-new',
+    listId: personalBoard.state.lists[0].id,
+    title: 'Личная задача в календаре',
+    startDate: '2026-11-26T09:00',
+    endDate: '2026-11-26T10:00',
+  });
+  const wsWithNew = saveCardInWorkspace(wsScheduled, newCard, true, personalBoard.id);
+  assert.equal(findCardInWorkspace(wsWithNew, 'card-cross-new')?.board.id, personalBoard.id);
+
+  // Move card from personal board to work board safely remapping listId
+  const wsMoved = saveCardInWorkspace(
+    wsWithNew,
+    { ...newCard, listId: personalBoard.state.lists[0].id },
+    false,
+    workBoard.id
+  );
+  const movedFound = findCardInWorkspace(wsMoved, 'card-cross-new');
+  assert.equal(movedFound?.board.id, workBoard.id);
+  assert.equal(movedFound?.card.listId, workBoard.state.lists[0].id);
+
+  // Delete card across workspace
+  const wsDeleted = deleteCardInWorkspace(wsMoved, 'card-cross-new');
+  assert.equal(findCardInWorkspace(wsDeleted, 'card-cross-new'), null);
+});
+
+test('financeLogic computes account balances across income, expense, and transfers', () => {
+  const card = createFinanceAccount({
+    id: 'acc-card',
+    title: 'Карта',
+    type: 'card',
+    initialBalance: 50000,
+    color: 'blue',
+    order: 0,
+  });
+  const reserve = createFinanceAccount({
+    id: 'acc-save',
+    title: 'Копилка',
+    type: 'savings',
+    initialBalance: 100000,
+    color: 'emerald',
+    order: 1,
+  });
+
+  const txs = [
+    createFinanceTransaction({
+      id: 't1',
+      kind: 'income',
+      amount: 30000,
+      categoryId: 'c-inc',
+      accountId: card.id,
+      date: '2026-11-05',
+      note: 'Аванс',
+    }),
+    createFinanceTransaction({
+      id: 't2',
+      kind: 'expense',
+      amount: 12000,
+      categoryId: 'c-exp',
+      accountId: card.id,
+      date: '2026-11-08',
+      note: 'Продукты',
+    }),
+    createFinanceTransaction({
+      id: 't3',
+      kind: 'transfer',
+      amount: 15000,
+      categoryId: null,
+      accountId: card.id,
+      toAccountId: reserve.id,
+      date: '2026-11-10',
+      note: 'В резерв',
+    }),
+  ];
+
+  const { balancesById, totalBalance } = computeAccountBalances([card, reserve], txs);
+  assert.equal(balancesById.get(card.id), 53000); // 50k + 30k - 12k - 15k
+  assert.equal(balancesById.get(reserve.id), 115000); // 100k + 15k
+  assert.equal(totalBalance, 168000);
+});
+
+test('financeLogic calculates monthly summary, category limits, warning/over statuses, and goal top-ups', () => {
+  const food = createFinanceCategory({
+    id: 'f-food',
+    name: 'Продукты',
+    kind: 'expense',
+    monthlyLimit: 10000,
+    color: 'emerald',
+    order: 0,
+  });
+  const cafe = createFinanceCategory({
+    id: 'f-cafe',
+    name: 'Кафе',
+    kind: 'expense',
+    monthlyLimit: 5000,
+    color: 'rose',
+    order: 1,
+  });
+  const salary = createFinanceCategory({
+    id: 'f-sal',
+    name: 'Зарплата',
+    kind: 'income',
+    monthlyLimit: null,
+    color: 'emerald',
+    order: 2,
+  });
+
+  const txs = [
+    createFinanceTransaction({
+      id: 't1',
+      kind: 'income',
+      amount: 100000,
+      categoryId: salary.id,
+      accountId: 'acc1',
+      date: '2026-11-01',
+    }),
+    createFinanceTransaction({
+      id: 't2',
+      kind: 'expense',
+      amount: 8500, // 85% -> warning
+      categoryId: food.id,
+      accountId: 'acc1',
+      date: '2026-11-04',
+    }),
+    createFinanceTransaction({
+      id: 't3',
+      kind: 'expense',
+      amount: 6500, // 130% -> over
+      categoryId: cafe.id,
+      accountId: 'acc1',
+      date: '2026-11-07',
+    }),
+  ];
+
+  const progress = computeCategoryBudgetProgress([food, cafe, salary], txs, '2026-11');
+  assert.equal(progress.length, 2);
+  const foodProg = progress.find((p) => p.category.id === food.id)!;
+  const cafeProg = progress.find((p) => p.category.id === cafe.id)!;
+
+  assert.equal(foodProg.status, 'warning');
+  assert.equal(foodProg.remaining, 1500);
+  assert.equal(cafeProg.status, 'over');
+  assert.equal(cafeProg.remaining, -1500);
+
+  const summary = computeMonthlyFinanceSummary(txs, [food, cafe, salary], '2026-11');
+  assert.equal(summary.totalIncome, 100000);
+  assert.equal(summary.totalExpense, 15000);
+  assert.equal(summary.netCashflow, 85000);
+  assert.equal(summary.savingsRatePercent, 85);
+  assert.equal(summary.totalBudgetLimit, 15000);
+  assert.equal(summary.overBudgetCategoriesCount, 1);
+
+  const goal = createFinanceGoal({
+    id: 'g1',
+    title: 'Отпуск',
+    targetAmount: 100000,
+    currentAmount: 20000,
+    deadline: null,
+    color: 'blue',
+    order: 0,
+  });
+  const topped = applyGoalContribution(goal, 5000);
+  assert.equal(topped.currentAmount, 25000);
+});
+
+test('financeLogic computes trends, recurring suggestions, filters, and safe CSV export', () => {
+  const acc = createFinanceAccount({
+    id: 'acc1',
+    title: 'Карта',
+    type: 'card',
+    initialBalance: 0,
+    color: 'blue',
+    order: 0,
+  });
+  const cat = createFinanceCategory({
+    id: 'cat1',
+    name: 'Подписки',
+    kind: 'expense',
+    monthlyLimit: 3000,
+    color: 'violet',
+    order: 0,
+  });
+
+  const txs = [
+    createFinanceTransaction({
+      id: 't-oct-sub',
+      kind: 'expense',
+      amount: 990,
+      categoryId: cat.id,
+      accountId: acc.id,
+      date: '2026-10-10',
+      note: 'Облако',
+      isRecurring: true,
+    }),
+    createFinanceTransaction({
+      id: 't-nov-exp',
+      kind: 'expense',
+      amount: 1500,
+      categoryId: cat.id,
+      accountId: acc.id,
+      date: '2026-11-15',
+      note: '=SUM(A1) проверка',
+      isRecurring: false,
+    }),
+  ];
+
+  const suggestions = getRecurringSuggestionsForMonth(txs, '2026-11');
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].id, 't-oct-sub');
+
+  const trend = computeMonthlyTrendSeries(txs, '2026-11', 3);
+  assert.equal(trend.length, 3);
+  assert.equal(trend[1].expense, 990);
+  assert.equal(trend[2].expense, 1500);
+
+  const daily = computeDailyExpenseSeries(txs, '2026-11');
+  assert.equal(daily.length, 30);
+  assert.equal(daily[14].expense, 1500);
+  assert.equal(daily[29].cumulativeExpense, 1500);
+
+  const filtered = filterFinanceTransactions(
+    txs,
+    { monthKey: '2026-11', kind: 'expense', categoryId: cat.id, accountId: acc.id, search: 'подписки' },
+    [cat],
+    [acc]
+  );
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].id, 't-nov-exp');
+
+  const csv = financeTransactionsToCsv(filtered, [cat], [acc]);
+  assert.ok(csv.startsWith('\uFEFFДата;Тип;Категория'));
+  assert.ok(csv.includes("'=SUM(A1) проверка"));
+});
+

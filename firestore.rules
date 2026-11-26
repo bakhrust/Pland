@@ -26,6 +26,10 @@ service cloud.firestore {
       return val == null || (val is string && val.size() <= maxLen);
     }
 
+    function isValidDateKey(val) {
+      return val is string && val.size() == 10 && val.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
     function isValidColor(color) {
       return color is string && color in ['blue', 'emerald', 'violet', 'amber', 'rose'];
     }
@@ -60,6 +64,7 @@ service cloud.firestore {
           'targetCalendarId',
           'theme',
           'notesSeeded',
+          'financeSeeded',
           'createdAt',
           'updatedAt'
         ])
@@ -73,6 +78,7 @@ service cloud.firestore {
         && data.targetCalendarId is string && data.targetCalendarId.size() >= 1 && data.targetCalendarId.size() <= 254
         && data.theme is string && data.theme in ['light', 'dark']
         && (!('notesSeeded' in data) || data.notesSeeded is bool)
+        && (!('financeSeeded' in data) || data.financeSeeded is bool)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -334,6 +340,162 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidFinanceAccountDoc(data, userId, accountId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'title',
+          'type',
+          'initialBalance',
+          'color',
+          'order',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'title',
+          'type',
+          'initialBalance',
+          'color',
+          'order',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == accountId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 80
+        && data.type is string && data.type in ['card', 'cash', 'savings', 'other']
+        && data.initialBalance is number && data.initialBalance >= -1000000000 && data.initialBalance <= 1000000000
+        && isValidColor(data.color)
+        && data.order is number && data.order >= 0 && data.order <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFinanceCategoryDoc(data, userId, categoryId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'name',
+          'kind',
+          'monthlyLimit',
+          'color',
+          'order',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'name',
+          'kind',
+          'monthlyLimit',
+          'color',
+          'order',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == categoryId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.kind is string && data.kind in ['expense', 'income']
+        && (data.monthlyLimit == null || (data.monthlyLimit is number && data.monthlyLimit > 0 && data.monthlyLimit <= 1000000000))
+        && isValidColor(data.color)
+        && data.order is number && data.order >= 0 && data.order <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFinanceTransactionDoc(data, userId, txId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'kind',
+          'amount',
+          'categoryId',
+          'accountId',
+          'toAccountId',
+          'date',
+          'note',
+          'isRecurring',
+          'createdAtMs',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'kind',
+          'amount',
+          'categoryId',
+          'accountId',
+          'toAccountId',
+          'date',
+          'note',
+          'isRecurring',
+          'createdAtMs',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == txId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.kind is string && data.kind in ['expense', 'income', 'transfer']
+        && data.amount is number && data.amount > 0 && data.amount <= 1000000000
+        && (data.categoryId == null || isValidId(data.categoryId))
+        && isValidId(data.accountId)
+        && (data.toAccountId == null || (isValidId(data.toAccountId) && data.toAccountId != data.accountId))
+        && (data.kind != 'transfer' || data.toAccountId != null)
+        && isValidDateKey(data.date)
+        && data.note is string && data.note.size() <= 300
+        && data.isRecurring is bool
+        && data.createdAtMs is number && data.createdAtMs >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFinanceGoalDoc(data, userId, goalId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'title',
+          'targetAmount',
+          'currentAmount',
+          'deadline',
+          'color',
+          'order',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'title',
+          'targetAmount',
+          'currentAmount',
+          'deadline',
+          'color',
+          'order',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == goalId
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.targetAmount is number && data.targetAmount > 0 && data.targetAmount <= 1000000000
+        && data.currentAmount is number && data.currentAmount >= 0 && data.currentAmount <= 1000000000
+        && (data.deadline == null || isValidDateKey(data.deadline))
+        && isValidColor(data.color)
+        && data.order is number && data.order >= 0 && data.order <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // ---------- Collection Rules ----------
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
@@ -355,6 +517,7 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['activeBoardId', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['notesSeeded', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['financeSeeded', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['visibleCalendarIds', 'targetCalendarId', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'activeBoardId', 'visibleCalendarIds', 'targetCalendarId', 'theme', 'updatedAt'])
         );
@@ -540,6 +703,131 @@ service cloud.firestore {
           );
 
         allow delete: if isValidId(userId) && isValidId(noteId) && isOwner(userId);
+      }
+
+      match /financeAccounts/{accountId} {
+        allow get: if isValidId(userId) && isValidId(accountId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(accountId)
+          && isOwner(userId)
+          && isValidFinanceAccountDoc(incoming(), userId, accountId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(accountId)
+          && isOwner(userId)
+          && isValidFinanceAccountDoc(incoming(), userId, accountId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'type', 'initialBalance', 'color', 'order', 'updatedAt'])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(accountId) && isOwner(userId);
+      }
+
+      match /financeCategories/{categoryId} {
+        allow get: if isValidId(userId) && isValidId(categoryId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(categoryId)
+          && isOwner(userId)
+          && isValidFinanceCategoryDoc(incoming(), userId, categoryId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(categoryId)
+          && isOwner(userId)
+          && isValidFinanceCategoryDoc(incoming(), userId, categoryId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['monthlyLimit', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'kind', 'monthlyLimit', 'color', 'order', 'updatedAt'])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(categoryId) && isOwner(userId);
+      }
+
+      match /financeTransactions/{transactionId} {
+        allow get: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(transactionId)
+          && isOwner(userId)
+          && isValidFinanceTransactionDoc(incoming(), userId, transactionId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(transactionId)
+          && isOwner(userId)
+          && isValidFinanceTransactionDoc(incoming(), userId, transactionId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'kind',
+              'amount',
+              'categoryId',
+              'accountId',
+              'toAccountId',
+              'date',
+              'note',
+              'isRecurring',
+              'createdAtMs',
+              'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
+      }
+
+      match /financeGoals/{goalId} {
+        allow get: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(goalId)
+          && isOwner(userId)
+          && isValidFinanceGoalDoc(incoming(), userId, goalId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(goalId)
+          && isOwner(userId)
+          && isValidFinanceGoalDoc(incoming(), userId, goalId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['currentAmount', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'targetAmount',
+              'currentAmount',
+              'deadline',
+              'color',
+              'order',
+              'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
       }
     }
   }

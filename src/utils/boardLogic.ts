@@ -2,10 +2,12 @@ import type {
   BoardList,
   BoardRecord,
   BoardState,
+  CardBoardMeta,
   CardItem,
   ChecklistItem,
   FilterState,
   LabelColor,
+  LabelDef,
   WorkspaceData,
 } from '../types/planner';
 import { addDays, pad2, parseFlexibleDate, toLocalDateKey, toLocalDateTimeInput } from './dateUtils';
@@ -307,5 +309,159 @@ export function deleteBoardFromWorkspace(
   return {
     activeBoardId: nextActiveId,
     boards: remaining,
+  };
+}
+
+export function getAllWorkspaceCards(
+  workspace: WorkspaceData,
+  boardFilterId: string | 'all' = 'all'
+): CardItem[] {
+  if (boardFilterId === 'all') {
+    return workspace.boards.flatMap((b) => b.state.cards);
+  }
+  const board = workspace.boards.find((b) => b.id === boardFilterId);
+  return board ? board.state.cards : [];
+}
+
+export function getWorkspaceLabels(workspace: WorkspaceData): LabelDef[] {
+  const seen = new Set<string>();
+  const labels: LabelDef[] = [];
+  for (const board of workspace.boards) {
+    for (const lbl of board.state.labels) {
+      if (!seen.has(lbl.id)) {
+        seen.add(lbl.id);
+        labels.push(lbl);
+      }
+    }
+  }
+  return labels;
+}
+
+export function getCardBoardMetaMap(workspace: WorkspaceData): Map<string, CardBoardMeta> {
+  const map = new Map<string, CardBoardMeta>();
+  for (const board of workspace.boards) {
+    const listTitleById = new Map(board.state.lists.map((l) => [l.id, l.title]));
+    for (const card of board.state.cards) {
+      map.set(card.id, {
+        boardId: board.id,
+        boardTitle: board.title,
+        boardColor: board.color,
+        listTitle: listTitleById.get(card.listId),
+      });
+    }
+  }
+  return map;
+}
+
+export function findCardInWorkspace(
+  workspace: WorkspaceData,
+  cardId: string
+): { board: BoardRecord; card: CardItem } | null {
+  for (const board of workspace.boards) {
+    const card = board.state.cards.find((c) => c.id === cardId);
+    if (card) {
+      return { board, card };
+    }
+  }
+  return null;
+}
+
+export function updateCardInWorkspace(
+  workspace: WorkspaceData,
+  cardId: string,
+  updater: (card: CardItem, board: BoardRecord) => CardItem
+): WorkspaceData {
+  let changed = false;
+  const nextBoards = workspace.boards.map((board) => {
+    const hasCard = board.state.cards.some((c) => c.id === cardId);
+    if (!hasCard) return board;
+    changed = true;
+    return {
+      ...board,
+      state: {
+        ...board.state,
+        cards: board.state.cards.map((c) => (c.id === cardId ? updater(c, board) : c)),
+      },
+    };
+  });
+  return changed ? { ...workspace, boards: nextBoards } : workspace;
+}
+
+export function saveCardInWorkspace(
+  workspace: WorkspaceData,
+  saved: CardItem,
+  isNew: boolean,
+  targetBoardId: string
+): WorkspaceData {
+  const resolvedTargetId = workspace.boards.some((b) => b.id === targetBoardId)
+    ? targetBoardId
+    : workspace.activeBoardId;
+
+  if (isNew) {
+    return {
+      ...workspace,
+      boards: workspace.boards.map((b) => {
+        if (b.id !== resolvedTargetId) return b;
+        const nextOrder = b.state.cards.filter((c) => c.listId === saved.listId).length;
+        return {
+          ...b,
+          state: {
+            ...b.state,
+            cards: [...b.state.cards, { ...saved, order: nextOrder }],
+          },
+        };
+      }),
+    };
+  }
+
+  const existing = findCardInWorkspace(workspace, saved.id);
+  const sourceBoardId = existing?.board.id ?? resolvedTargetId;
+
+  if (sourceBoardId === resolvedTargetId) {
+    return updateCardInWorkspace(workspace, saved.id, () => saved);
+  }
+
+  // Move card across boards cleanly
+  return {
+    ...workspace,
+    boards: workspace.boards.map((b) => {
+      if (b.id === sourceBoardId) {
+        return {
+          ...b,
+          state: {
+            ...b.state,
+            cards: b.state.cards.filter((c) => c.id !== saved.id),
+          },
+        };
+      }
+      if (b.id === resolvedTargetId) {
+        const validListId = b.state.lists.some((l) => l.id === saved.listId)
+          ? saved.listId
+          : b.state.lists[0]?.id ?? saved.listId;
+        const nextOrder = b.state.cards.filter((c) => c.listId === validListId).length;
+        return {
+          ...b,
+          state: {
+            ...b.state,
+            cards: [...b.state.cards, { ...saved, listId: validListId, order: nextOrder }],
+          },
+        };
+      }
+      return b;
+    }),
+  };
+}
+
+export function deleteCardInWorkspace(
+  workspace: WorkspaceData,
+  cardId: string
+): WorkspaceData {
+  return {
+    ...workspace,
+    boards: workspace.boards.map((b) =>
+      b.state.cards.some((c) => c.id === cardId)
+        ? { ...b, state: { ...b.state, cards: b.state.cards.filter((c) => c.id !== cardId) } }
+        : b
+    ),
   };
 }

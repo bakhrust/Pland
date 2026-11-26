@@ -1,6 +1,6 @@
 import { Calendar, Plus } from 'lucide-react';
 import { useState } from 'react';
-import type { CardItem, GoogleCalendarEvent, LabelDef } from '../types/planner';
+import type { CardBoardMeta, CardItem, GoogleCalendarEvent, LabelDef } from '../types/planner';
 import {
   extractDateKey,
   formatRussianShortDate,
@@ -16,6 +16,8 @@ interface MonthPlannerViewProps {
   anchorDate: Date;
   cards: CardItem[];
   labels: LabelDef[];
+  boardMetaByCardId?: Map<string, CardBoardMeta>;
+  showBoardBadge?: boolean;
   googleEvents: GoogleCalendarEvent[];
   draggedCardId: string | null;
   onDragStartCard: (cardId: string) => void;
@@ -32,6 +34,8 @@ export function MonthPlannerView({
   anchorDate,
   cards,
   labels,
+  boardMetaByCardId,
+  showBoardBadge = false,
   googleEvents,
   draggedCardId,
   onDragStartCard,
@@ -144,6 +148,7 @@ export function MonthPlannerView({
                 {dayCards.map((card) => {
                   const firstLbl = labels.find((l) => card.labelIds.includes(l.id));
                   const meta = firstLbl ? LABEL_COLOR_META[firstLbl.color] : LABEL_COLOR_META.blue;
+                  const boardMeta = boardMetaByCardId?.get(card.id);
                   const hasTime = card.startDate && !card.allDay && card.startDate.includes('T');
 
                   return (
@@ -161,14 +166,23 @@ export function MonthPlannerView({
                         onDragEndCard();
                       }}
                       onClick={() => onSelectCard(card)}
-                      className={`w-full text-left px-1.5 py-0.5 text-[11px] rounded border truncate cursor-pointer block ${meta.blockBg} ${meta.blockBorder} ${meta.text}`}
+                      title={boardMeta ? `${boardMeta.boardTitle} · ${card.title}` : card.title}
+                      className={`w-full text-left px-1.5 py-0.5 text-[11px] rounded border cursor-pointer flex items-center gap-1 min-w-0 ${meta.blockBg} ${meta.blockBorder} ${meta.text}`}
                     >
+                      {showBoardBadge && boardMeta && (
+                        <span
+                          className={`w-1.5 h-1.5 rounded-xs shrink-0 ${
+                            LABEL_COLOR_META[boardMeta.boardColor]?.dot ?? 'bg-blue-600'
+                          }`}
+                          aria-hidden="true"
+                        />
+                      )}
                       {hasTime && (
-                        <span className="font-mono tabular-nums mr-1 opacity-80">
+                        <span className="font-mono tabular-nums shrink-0 opacity-80">
                           {formatTimeHHMM(card.startDate!)}
                         </span>
                       )}
-                      <span className="font-medium">{card.title}</span>
+                      <span className="font-medium truncate">{card.title}</span>
                     </button>
                   );
                 })}
@@ -275,6 +289,7 @@ export function MonthPlannerView({
               {selectedAgenda.dayCards.map((card) => {
                 const firstLbl = labels.find((l) => card.labelIds.includes(l.id));
                 const meta = firstLbl ? LABEL_COLOR_META[firstLbl.color] : LABEL_COLOR_META.blue;
+                const boardMeta = boardMetaByCardId?.get(card.id);
                 const hasTime = card.startDate && !card.allDay && card.startDate.includes('T');
 
                 return (
@@ -288,10 +303,23 @@ export function MonthPlannerView({
                       <div className="text-xs font-semibold text-slate-900 truncate">
                         {card.title}
                       </div>
-                      <div className="text-[11px] text-slate-500 font-mono tabular-nums mt-0.5">
-                        {hasTime
-                          ? `${formatTimeHHMM(card.startDate!)}${card.endDate ? `–${formatTimeHHMM(card.endDate)}` : ''}`
-                          : 'Весь день'}
+                      <div className="text-[11px] text-slate-500 font-mono tabular-nums mt-0.5 flex items-center gap-1.5">
+                        <span>
+                          {hasTime
+                            ? `${formatTimeHHMM(card.startDate!)}${card.endDate ? `–${formatTimeHHMM(card.endDate)}` : ''}`
+                            : 'Весь день'}
+                        </span>
+                        {showBoardBadge && boardMeta && (
+                          <span className="inline-flex items-center gap-1 font-sans text-slate-500">
+                            <span
+                              className={`w-1.5 h-1.5 rounded-xs shrink-0 ${
+                                LABEL_COLOR_META[boardMeta.boardColor]?.dot ?? 'bg-blue-600'
+                              }`}
+                              aria-hidden="true"
+                            />
+                            <span>{boardMeta.boardTitle}</span>
+                          </span>
+                        )}
                       </div>
                     </div>
                     {card.googleEventId && !card.syncDirty && (

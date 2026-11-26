@@ -37,6 +37,7 @@ import type {
   FinanceAccountType,
   FinanceCategory,
   FinanceCategoryKind,
+  FinanceCurrency,
   FinanceGoal,
   FinanceTransaction,
   FinanceTransactionKind,
@@ -44,6 +45,7 @@ import type {
 } from '../types/planner';
 import { formatRussianShortDate, parseFlexibleDate, toLocalDateKey } from '../utils/dateUtils';
 import {
+  FINANCE_CURRENCIES,
   computeAccountBalances,
   computeCategoryBudgetProgress,
   computeDailyExpenseSeries,
@@ -51,7 +53,7 @@ import {
   computeMonthlyTrendSeries,
   filterFinanceTransactions,
   financeTransactionsToCsv,
-  formatMoneyRUB,
+  formatMoney,
   formatRussianMonthYear,
   getMonthKeyFromDate,
   getRecurringSuggestionsForMonth,
@@ -72,6 +74,8 @@ interface FinanceViewProps {
   categories: FinanceCategory[];
   transactions: FinanceTransaction[];
   goals: FinanceGoal[];
+  currency: FinanceCurrency;
+  onChangeCurrency: (currency: FinanceCurrency) => void;
   onSaveTransaction: (payload: {
     id?: string;
     kind: FinanceTransactionKind;
@@ -150,6 +154,8 @@ export function FinanceView({
   categories,
   transactions,
   goals,
+  currency,
+  onChangeCurrency,
   onSaveTransaction,
   onDeleteTransaction,
   onSaveCategory,
@@ -161,6 +167,8 @@ export function FinanceView({
   onContributeGoal,
   onSeedStarterFinance,
 }: FinanceViewProps) {
+  const fmt = (amount: number, opts?: { signed?: boolean; hideFraction?: boolean }) =>
+    formatMoney(amount, { ...opts, currency });
   const currentMonthKey = useMemo(() => getMonthKeyFromDate(new Date()), []);
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthKey);
   const [activeTab, setActiveTab] = useState<FinanceTab>('overview');
@@ -277,7 +285,7 @@ export function FinanceView({
   );
 
   const handleExportCsv = () => {
-    const csv = financeTransactionsToCsv(filteredTransactions, categories, accounts);
+    const csv = financeTransactionsToCsv(filteredTransactions, categories, accounts, currency);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -316,7 +324,7 @@ export function FinanceView({
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-      <div className="max-w-6xl mx-auto px-3.5 md:px-6 py-4 md:py-7 space-y-4 md:space-y-5">
+      <div className="max-w-6xl mx-auto px-3.5 md:px-6 pt-4 md:pt-7 pb-24 md:pb-24 space-y-4 md:space-y-5">
         {/* Header & Month Controls */}
         <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div className="min-w-0">
@@ -387,18 +395,20 @@ export function FinanceView({
               ))}
             </nav>
 
-            {/* Primary CTA */}
-            <button
-              type="button"
-              data-testid="add-transaction-button"
-              onClick={() =>
-                setTxModal({ isOpen: true, transaction: null, defaultKind: 'expense' })
-              }
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 md:px-4 h-10 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            {/* Currency Switcher */}
+            <select
+              data-testid="finance-currency-select"
+              aria-label="Валюта учёта"
+              value={currency}
+              onChange={(e) => onChangeCurrency(e.target.value as FinanceCurrency)}
+              className="h-9 md:h-10 px-2.5 text-xs font-semibold font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-600 cursor-pointer"
             >
-              <Plus className="w-4 h-4" aria-hidden="true" />
-              <span>Операция</span>
-            </button>
+              {FINANCE_CURRENCIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.symbol} · {c.code}
+                </option>
+              ))}
+            </select>
           </div>
         </header>
 
@@ -446,7 +456,7 @@ export function FinanceView({
                   data-testid="kpi-total-balance"
                   className="mt-1.5 text-base md:text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 truncate"
                 >
-                  {formatMoneyRUB(accountBalances.totalBalance)}
+                  {fmt(accountBalances.totalBalance)}
                 </div>
                 <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
                   На {accounts.length} {accounts.length === 1 ? 'счёте' : 'счетах'}
@@ -463,7 +473,7 @@ export function FinanceView({
                   data-testid="kpi-month-income"
                   className="mt-1.5 text-base md:text-xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 truncate"
                 >
-                  {formatMoneyRUB(monthlySummary.totalIncome, { signed: monthlySummary.totalIncome > 0 })}
+                  {fmt(monthlySummary.totalIncome, { signed: monthlySummary.totalIncome > 0 })}
                 </div>
                 <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
                   Поступлений: {monthlySummary.incomeCount}
@@ -480,11 +490,11 @@ export function FinanceView({
                   data-testid="kpi-month-expense"
                   className="mt-1.5 text-base md:text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 truncate"
                 >
-                  {formatMoneyRUB(monthlySummary.totalExpense)}
+                  {fmt(monthlySummary.totalExpense)}
                 </div>
                 <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
                   {monthlySummary.totalBudgetLimit > 0
-                    ? `Лимит: ${monthlySummary.budgetUtilizationPercent}% от ${formatMoneyRUB(monthlySummary.totalBudgetLimit)}`
+                    ? `Лимит: ${monthlySummary.budgetUtilizationPercent}% от ${fmt(monthlySummary.totalBudgetLimit)}`
                     : `Трат: ${monthlySummary.expenseCount}`}
                 </div>
               </div>
@@ -510,7 +520,7 @@ export function FinanceView({
                       : 'text-rose-600 dark:text-rose-400'
                   }`}
                 >
-                  {formatMoneyRUB(monthlySummary.netCashflow, { signed: true })}
+                  {fmt(monthlySummary.netCashflow, { signed: true })}
                 </div>
                 <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
                   {monthlySummary.totalIncome > 0
@@ -552,7 +562,7 @@ export function FinanceView({
                             <Plus className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                             <span className="truncate max-w-[140px]">{label}</span>
                             <span className="font-mono tabular-nums font-semibold">
-                              {formatMoneyRUB(tpl.amount)}
+                              {fmt(tpl.amount)}
                             </span>
                           </button>
                         );
@@ -643,13 +653,13 @@ export function FinanceView({
                                         {formatRussianMonthYear(pt.monthKey)}
                                       </p>
                                       <p className="font-mono tabular-nums text-emerald-400">
-                                        Доходы: {formatMoneyRUB(pt.income)}
+                                        Доходы: {fmt(pt.income)}
                                       </p>
                                       <p className="font-mono tabular-nums text-rose-400">
-                                        Расходы: {formatMoneyRUB(pt.expense)}
+                                        Расходы: {fmt(pt.expense)}
                                       </p>
                                       <p className="font-mono tabular-nums text-slate-300 border-t border-slate-700 pt-1">
-                                        Итог: {formatMoneyRUB(pt.net, { signed: true })}
+                                        Итог: {fmt(pt.net, { signed: true })}
                                       </p>
                                     </div>
                                   );
@@ -701,10 +711,10 @@ export function FinanceView({
                                     <div className="bg-slate-900 text-white dark:bg-slate-800 border border-slate-700 text-xs rounded-lg p-2.5 shadow-lg space-y-1">
                                       <p className="font-semibold font-mono tabular-nums">{pt.dateKey}</p>
                                       <p className="font-mono tabular-nums">
-                                        За день: {formatMoneyRUB(pt.expense)}
+                                        За день: {fmt(pt.expense)}
                                       </p>
                                       <p className="font-mono tabular-nums text-blue-300">
-                                        Накопительно: {formatMoneyRUB(pt.cumulativeExpense)}
+                                        Накопительно: {fmt(pt.cumulativeExpense)}
                                       </p>
                                     </div>
                                   );
@@ -775,12 +785,12 @@ export function FinanceView({
                                   </div>
                                   <div className="font-mono tabular-nums shrink-0 text-right">
                                     <span className="font-semibold text-slate-900 dark:text-slate-100">
-                                      {formatMoneyRUB(item.spent)}
+                                      {fmt(item.spent)}
                                     </span>
                                     {item.limit !== null && (
                                       <span className="text-slate-400 dark:text-slate-500">
                                         {' '}
-                                        / {formatMoneyRUB(item.limit)}
+                                        / {fmt(item.limit)}
                                       </span>
                                     )}
                                   </div>
@@ -797,7 +807,7 @@ export function FinanceView({
                                   <div className="flex items-center gap-1 text-[11px] font-medium text-rose-600 dark:text-rose-400 tabular-nums">
                                     <AlertTriangle className="w-3 h-3 shrink-0" aria-hidden="true" />
                                     <span>
-                                      Превышение на {formatMoneyRUB(Math.abs(item.remaining))}
+                                      Превышение на {fmt(Math.abs(item.remaining))}
                                     </span>
                                   </div>
                                 )}
@@ -1000,10 +1010,10 @@ export function FinanceView({
 
                         const formattedAmount =
                           tx.kind === 'income'
-                            ? formatMoneyRUB(tx.amount, { signed: true })
+                            ? fmt(tx.amount, { signed: true })
                             : tx.kind === 'expense'
-                            ? formatMoneyRUB(-tx.amount)
-                            : formatMoneyRUB(tx.amount);
+                            ? fmt(-tx.amount)
+                            : fmt(tx.amount);
 
                         const parsedDate = parseFlexibleDate(tx.date);
 
@@ -1117,20 +1127,20 @@ export function FinanceView({
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         Запланировано лимитов:{' '}
                         <span className="font-mono tabular-nums font-semibold text-slate-800 dark:text-slate-200">
-                          {formatMoneyRUB(monthlySummary.totalBudgetLimit)}
+                          {fmt(monthlySummary.totalBudgetLimit)}
                         </span>{' '}
                         · Потрачено по ним:{' '}
                         <span className="font-mono tabular-nums font-semibold text-slate-800 dark:text-slate-200">
-                          {formatMoneyRUB(monthlySummary.budgetedExpenseSpent)}
+                          {fmt(monthlySummary.budgetedExpenseSpent)}
                         </span>{' '}
                         ·{' '}
                         {monthlySummary.budgetRemaining >= 0 ? (
                           <span className="font-mono tabular-nums font-semibold text-emerald-600 dark:text-emerald-400">
-                            Осталось {formatMoneyRUB(monthlySummary.budgetRemaining)}
+                            Осталось {fmt(monthlySummary.budgetRemaining)}
                           </span>
                         ) : (
                           <span className="font-mono tabular-nums font-semibold text-rose-600 dark:text-rose-400">
-                            Перерасход {formatMoneyRUB(Math.abs(monthlySummary.budgetRemaining))}
+                            Перерасход {fmt(Math.abs(monthlySummary.budgetRemaining))}
                           </span>
                         )}
                       </p>
@@ -1233,11 +1243,11 @@ export function FinanceView({
 
                         <div className="flex items-baseline justify-between gap-2 font-mono tabular-nums">
                           <span className="text-base font-bold text-slate-900 dark:text-slate-100">
-                            {formatMoneyRUB(item.spent)}
+                            {fmt(item.spent)}
                           </span>
                           <span className="text-xs text-slate-500 dark:text-slate-400">
                             {item.limit !== null
-                              ? `лимит ${formatMoneyRUB(item.limit)} (${item.percent}%)`
+                              ? `лимит ${fmt(item.limit)} (${item.percent}%)`
                               : `без лимита · ${item.shareOfTotalExpense}% трат`}
                           </span>
                         </div>
@@ -1254,15 +1264,15 @@ export function FinanceView({
                             {item.status === 'over' ? (
                               <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400">
                                 <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
-                                Превышение лимита на {formatMoneyRUB(Math.abs(item.remaining))}
+                                Превышение лимита на {fmt(Math.abs(item.remaining))}
                               </span>
                             ) : item.status === 'warning' ? (
                               <span className="text-amber-600 dark:text-amber-400">
-                                Близко к лимиту · осталось {formatMoneyRUB(item.remaining)}
+                                Близко к лимиту · осталось {fmt(item.remaining)}
                               </span>
                             ) : (
                               <span className="text-emerald-600 dark:text-emerald-400">
-                                В пределах бюджета · свободно {formatMoneyRUB(item.remaining)}
+                                В пределах бюджета · свободно {fmt(item.remaining)}
                               </span>
                             )}
                           </div>
@@ -1306,7 +1316,7 @@ export function FinanceView({
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span className="font-mono tabular-nums font-bold text-emerald-600 dark:text-emerald-400">
-                            {formatMoneyRUB(received, { signed: received > 0 })}
+                            {fmt(received, { signed: received > 0 })}
                           </span>
                           <button
                             type="button"
@@ -1387,7 +1397,7 @@ export function FinanceView({
                               </div>
                               <p className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
                                 {ACCOUNT_TYPE_LABELS[acc.type]} · Нач. остаток:{' '}
-                                {formatMoneyRUB(acc.initialBalance)}
+                                {fmt(acc.initialBalance)}
                               </p>
                             </div>
                           </div>
@@ -1400,7 +1410,7 @@ export function FinanceView({
                                   : 'text-slate-900 dark:text-slate-100'
                               }`}
                             >
-                              {formatMoneyRUB(currentBalance)}
+                              {fmt(currentBalance)}
                             </span>
                             <button
                               type="button"
@@ -1471,7 +1481,7 @@ export function FinanceView({
                                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 tabular-nums">
                                   {left === 0
                                     ? 'Цель достигнута'
-                                    : `Осталось накопить ${formatMoneyRUB(left)}`}
+                                    : `Осталось накопить ${fmt(left)}`}
                                   {goal.deadline ? ` · до ${goal.deadline}` : ''}
                                 </p>
                               </div>
@@ -1499,8 +1509,8 @@ export function FinanceView({
                             <div className="space-y-1.5">
                               <div className="flex items-baseline justify-between text-xs font-mono tabular-nums">
                                 <span className="font-bold text-slate-900 dark:text-slate-100">
-                                  {formatMoneyRUB(goal.currentAmount)} /{' '}
-                                  {formatMoneyRUB(goal.targetAmount)}
+                                  {fmt(goal.currentAmount)} /{' '}
+                                  {fmt(goal.targetAmount)}
                                 </span>
                                 <span className="font-semibold text-slate-600 dark:text-slate-300">
                                   {pct}%
@@ -1525,7 +1535,7 @@ export function FinanceView({
                                   onClick={() => onContributeGoal(goal.id, step)}
                                   className="px-2.5 py-1.5 text-[11px] font-mono tabular-nums font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 hover:border-emerald-300 dark:hover:border-emerald-700 text-slate-700 dark:text-slate-200 rounded-lg transition-colors cursor-pointer"
                                 >
-                                  +{formatMoneyRUB(step)}
+                                  +{fmt(step)}
                                 </button>
                               ))}
                             </div>
@@ -1541,10 +1551,25 @@ export function FinanceView({
         )}
       </div>
 
+      {/* Floating standalone Операция button */}
+      <button
+        type="button"
+        data-testid="add-transaction-button"
+        onClick={() =>
+          setTxModal({ isOpen: true, transaction: null, defaultKind: 'expense' })
+        }
+        aria-label="Добавить операцию"
+        className="fixed right-4 md:right-7 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-7 z-40 inline-flex items-center justify-center gap-2 h-12 px-4 md:px-5 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-xs md:text-sm font-semibold rounded-2xl shadow-lg shadow-blue-600/25 dark:shadow-blue-950/60 ring-1 ring-white/20 transition-all whitespace-nowrap cursor-pointer"
+      >
+        <Plus className="w-4 h-4 md:w-4.5 md:h-4.5" aria-hidden="true" />
+        <span>Операция</span>
+      </button>
+
       {/* Modals */}
       <FinanceTransactionModal
         isOpen={txModal.isOpen}
         transaction={txModal.transaction}
+        currency={currency}
         defaultKind={txModal.defaultKind}
         defaultMonthKey={selectedMonth}
         accounts={accounts}
@@ -1563,6 +1588,7 @@ export function FinanceView({
       <FinanceCategoryModal
         isOpen={catModal.isOpen}
         category={catModal.category}
+        currency={currency}
         defaultKind={catModal.defaultKind}
         onClose={() => setCatModal((prev) => ({ ...prev, isOpen: false, category: null }))}
         onSave={(payload) => {
@@ -1578,6 +1604,7 @@ export function FinanceView({
       <FinanceAccountModal
         isOpen={accModal.isOpen}
         account={accModal.account}
+        currency={currency}
         canDelete={accounts.length > 1}
         onClose={() => setAccModal({ isOpen: false, account: null })}
         onSave={(payload) => {
@@ -1593,6 +1620,7 @@ export function FinanceView({
       <FinanceGoalModal
         isOpen={goalModal.isOpen}
         goal={goalModal.goal}
+        currency={currency}
         onClose={() => setGoalModal({ isOpen: false, goal: null })}
         onSave={(payload) => {
           onSaveGoal(payload);

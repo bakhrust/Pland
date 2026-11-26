@@ -32,6 +32,7 @@ import type {
   FinanceAccountType,
   FinanceCategory,
   FinanceCategoryKind,
+  FinanceCurrency,
   FinanceGoal,
   FinanceTransaction,
   FinanceTransactionKind,
@@ -46,9 +47,11 @@ import type {
 } from '../types/planner';
 import { toLocalDateKey } from '../utils/dateUtils';
 import {
+  DEFAULT_FINANCE_CURRENCY,
   FINANCE_ACCOUNT_TYPES,
   FINANCE_TRANSACTION_KINDS,
   roundMoney,
+  sanitizeFinanceCurrency,
 } from '../utils/financeLogic';
 import { NOTE_BLOCK_TYPES } from '../utils/notesLogic';
 import { clampText, isValidEntityId } from '../utils/urlSafety';
@@ -487,6 +490,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   financeCategories: FinanceCategory[];
   financeTransactions: FinanceTransaction[];
   financeGoals: FinanceGoal[];
+  financeCurrency: FinanceCurrency;
   visibleCalendarIds: string[];
   targetCalendarId: string;
   theme: 'light' | 'dark';
@@ -532,6 +536,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         theme: 'light',
         notesSeeded: true,
         financeSeeded: true,
+        financeCurrency: DEFAULT_FINANCE_CURRENCY,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -677,6 +682,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
       financeCategories: seedFinanceCategories,
       financeTransactions: seedFinanceTransactions,
       financeGoals: seedFinanceGoals,
+      financeCurrency: DEFAULT_FINANCE_CURRENCY,
       visibleCalendarIds: legacy.visibleCalendarIds,
       targetCalendarId: legacy.targetCalendarId || 'primary',
       theme: 'light',
@@ -1031,6 +1037,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
     ? savedActiveBoardId
     : boards[0].id;
   const theme: 'light' | 'dark' = userData.theme === 'dark' ? 'dark' : 'light';
+  const financeCurrency = sanitizeFinanceCurrency(userData.financeCurrency);
 
   return {
     workspace: {
@@ -1044,6 +1051,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
     financeCategories,
     financeTransactions,
     financeGoals,
+    financeCurrency,
     visibleCalendarIds: Array.isArray(userData.visibleCalendarIds)
       ? (userData.visibleCalendarIds as string[])
       : [],
@@ -1062,6 +1070,7 @@ export async function saveUserPrefsToFirestore(
     visibleCalendarIds?: string[];
     targetCalendarId?: string;
     theme?: 'light' | 'dark';
+    financeCurrency?: FinanceCurrency;
   }
 ): Promise<void> {
   const userPath = `users/${uid}`;
@@ -1082,6 +1091,9 @@ export async function saveUserPrefsToFirestore(
   }
   if (prefs.theme !== undefined) {
     payload.theme = prefs.theme === 'dark' ? 'dark' : 'light';
+  }
+  if (prefs.financeCurrency !== undefined) {
+    payload.financeCurrency = sanitizeFinanceCurrency(prefs.financeCurrency);
   }
   try {
     await updateDoc(doc(db, 'users', uid), payload);

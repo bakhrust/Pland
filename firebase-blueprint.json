@@ -45,6 +45,10 @@
         "financeSeeded": {
           "type": "boolean"
         },
+        "financeCurrency": {
+          "type": "string",
+          "enum": ["RUB", "USD", "EUR", "KZT", "BYN", "GEL", "TRY", "AED", "GBP", "CNY"]
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"

@@ -180,6 +180,18 @@ export interface NotePage {
   updatedAtMs: number;
 }
 
+export type FinanceCurrency =
+  | 'RUB'
+  | 'USD'
+  | 'EUR'
+  | 'KZT'
+  | 'BYN'
+  | 'GEL'
+  | 'TRY'
+  | 'AED'
+  | 'GBP'
+  | 'CNY';
+
 export type FinanceAccountType = 'card' | 'cash' | 'savings' | 'other';
 
 export interface FinanceAccount {
@@ -197,7 +209,7 @@ export interface FinanceCategory {
   id: string;
   name: string;
   kind: FinanceCategoryKind;
-  /** Monthly spending limit in RUB for expense categories (null = unlimited) */
+  /** Monthly spending limit in active currency for expense categories (null = unlimited) */
   monthlyLimit: number | null;
   color: LabelColor;
   order: number;

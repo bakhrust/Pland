@@ -3,6 +3,7 @@ import type {
   FinanceAccountType,
   FinanceCategory,
   FinanceCategoryKind,
+  FinanceCurrency,
   FinanceGoal,
   FinanceTransaction,
   FinanceTransactionKind,
@@ -14,6 +15,42 @@ import { clampText } from './urlSafety';
 export const FINANCE_ACCOUNT_TYPES: FinanceAccountType[] = ['card', 'cash', 'savings', 'other'];
 export const FINANCE_CATEGORY_KINDS: FinanceCategoryKind[] = ['expense', 'income'];
 export const FINANCE_TRANSACTION_KINDS: FinanceTransactionKind[] = ['expense', 'income', 'transfer'];
+
+export interface FinanceCurrencyMeta {
+  code: FinanceCurrency;
+  symbol: string;
+  label: string;
+}
+
+export const DEFAULT_FINANCE_CURRENCY: FinanceCurrency = 'RUB';
+
+export const FINANCE_CURRENCIES: FinanceCurrencyMeta[] = [
+  { code: 'RUB', symbol: '₽', label: 'Российский рубль' },
+  { code: 'USD', symbol: '$', label: 'Доллар США' },
+  { code: 'EUR', symbol: '€', label: 'Евро' },
+  { code: 'KZT', symbol: '₸', label: 'Казахстанский тенге' },
+  { code: 'BYN', symbol: 'Br', label: 'Белорусский рубль' },
+  { code: 'GEL', symbol: '₾', label: 'Грузинский лари' },
+  { code: 'TRY', symbol: '₺', label: 'Турецкая лира' },
+  { code: 'AED', symbol: 'AED', label: 'Дирхам ОАЭ' },
+  { code: 'GBP', symbol: '£', label: 'Фунт стерлингов' },
+  { code: 'CNY', symbol: '¥', label: 'Китайский юань' },
+];
+
+const CURRENCY_META_MAP = new Map<FinanceCurrency, FinanceCurrencyMeta>(
+  FINANCE_CURRENCIES.map((c) => [c.code, c])
+);
+
+export function sanitizeFinanceCurrency(raw: unknown): FinanceCurrency {
+  if (typeof raw === 'string' && CURRENCY_META_MAP.has(raw as FinanceCurrency)) {
+    return raw as FinanceCurrency;
+  }
+  return DEFAULT_FINANCE_CURRENCY;
+}
+
+export function getCurrencyMeta(currency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY): FinanceCurrencyMeta {
+  return CURRENCY_META_MAP.get(currency) ?? FINANCE_CURRENCIES[0];
+}
 
 const RUSSIAN_MONTHS_NOMINATIVE = [
   'Январь',
@@ -88,9 +125,9 @@ export function roundMoney(val: number): number {
   return Math.round(val * 100) / 100;
 }
 
-export function formatMoneyRUB(
+export function formatMoney(
   amount: number,
-  options?: { signed?: boolean; hideFraction?: boolean }
+  options?: { currency?: FinanceCurrency; signed?: boolean; hideFraction?: boolean }
 ): string {
   const safe = roundMoney(amount);
   const abs = Math.abs(safe);
@@ -99,14 +136,22 @@ export function formatMoneyRUB(
     minimumFractionDigits: hasFraction ? 2 : 0,
     maximumFractionDigits: hasFraction ? 2 : 0,
   }).format(abs);
+  const symbol = getCurrencyMeta(options?.currency ?? DEFAULT_FINANCE_CURRENCY).symbol;
 
   if (safe < 0) {
-    return `−${formatted} ₽`;
+    return `−${formatted} ${symbol}`;
   }
   if (options?.signed && safe > 0) {
-    return `+${formatted} ₽`;
+    return `+${formatted} ${symbol}`;
   }
-  return `${formatted} ₽`;
+  return `${formatted} ${symbol}`;
+}
+
+export function formatMoneyRUB(
+  amount: number,
+  options?: { signed?: boolean; hideFraction?: boolean }
+): string {
+  return formatMoney(amount, { ...options, currency: 'RUB' });
 }
 
 export function computeAccountBalances(
@@ -474,10 +519,12 @@ function escapeCsvCell(raw: string | number): string {
 export function financeTransactionsToCsv(
   transactions: FinanceTransaction[],
   categories: FinanceCategory[],
-  accounts: FinanceAccount[]
+  accounts: FinanceAccount[],
+  currency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY
 ): string {
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
   const accMap = new Map(accounts.map((a) => [a.id, a.title]));
+  const currencyMeta = getCurrencyMeta(currency);
 
   const kindLabel: Record<FinanceTransactionKind, string> = {
     expense: 'Расход',
@@ -486,7 +533,16 @@ export function financeTransactionsToCsv(
   };
 
   const rows: string[] = [
-    ['Дата', 'Тип', 'Категория', 'Счёт', 'Счёт зачисления', 'Сумма (₽)', 'Комментарий', 'Регулярная']
+    [
+      'Дата',
+      'Тип',
+      'Категория',
+      'Счёт',
+      'Счёт зачисления',
+      `Сумма (${currencyMeta.symbol})`,
+      'Комментарий',
+      'Регулярная',
+    ]
       .map(escapeCsvCell)
       .join(';'),
   ];

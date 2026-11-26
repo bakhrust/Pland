@@ -3,14 +3,17 @@ import { type FormEvent, useEffect, useState } from 'react';
 import type {
   FinanceAccount,
   FinanceCategory,
+  FinanceCurrency,
   FinanceTransaction,
   FinanceTransactionKind,
 } from '../types/planner';
 import { toLocalDateKey } from '../utils/dateUtils';
+import { DEFAULT_FINANCE_CURRENCY, getCurrencyMeta } from '../utils/financeLogic';
 
 interface FinanceTransactionModalProps {
   isOpen: boolean;
   transaction: FinanceTransaction | null;
+  currency?: FinanceCurrency;
   defaultKind?: FinanceTransactionKind;
   defaultMonthKey?: string;
   accounts: FinanceAccount[];
@@ -33,6 +36,7 @@ interface FinanceTransactionModalProps {
 export function FinanceTransactionModal({
   isOpen,
   transaction,
+  currency = DEFAULT_FINANCE_CURRENCY,
   defaultKind = 'expense',
   defaultMonthKey,
   accounts,
@@ -41,6 +45,7 @@ export function FinanceTransactionModal({
   onSave,
   onDelete,
 }: FinanceTransactionModalProps) {
+  const currencySymbol = getCurrencyMeta(currency).symbol;
   const [kind, setKind] = useState<FinanceTransactionKind>(defaultKind);
   const [amountStr, setAmountStr] = useState('');
   const [categoryId, setCategoryId] = useState<string>('');
@@ -119,7 +124,7 @@ export function FinanceTransactionModal({
       return;
     }
     if (parsedAmount > 1_000_000_000) {
-      setError('Сумма не может превышать 1 000 000 000 ₽.');
+      setError(`Сумма не может превышать 1 000 000 000 ${currencySymbol}.`);
       return;
     }
     if (!accountId) {
@@ -211,7 +216,7 @@ export function FinanceTransactionModal({
               htmlFor="tx-amount-input"
               className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
             >
-              Сумма (₽)
+              Сумма ({currencySymbol})
             </label>
             <input
               id="tx-amount-input"

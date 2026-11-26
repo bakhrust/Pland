@@ -66,7 +66,9 @@ import {
   createFinanceTransaction,
   filterFinanceTransactions,
   financeTransactionsToCsv,
+  formatMoney,
   getRecurringSuggestionsForMonth,
+  sanitizeFinanceCurrency,
 } from './financeLogic';
 
 const makeCard = (overrides: Partial<CardItem> = {}): CardItem => ({
@@ -713,8 +715,14 @@ test('financeLogic computes trends, recurring suggestions, filters, and safe CSV
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0].id, 't-nov-exp');
 
-  const csv = financeTransactionsToCsv(filtered, [cat], [acc]);
+  const csv = financeTransactionsToCsv(filtered, [cat], [acc], 'USD');
   assert.ok(csv.startsWith('\uFEFFДата;Тип;Категория'));
+  assert.ok(csv.includes('Сумма ($)'));
   assert.ok(csv.includes("'=SUM(A1) проверка"));
+
+  assert.equal(sanitizeFinanceCurrency('EUR'), 'EUR');
+  assert.equal(sanitizeFinanceCurrency('INVALID'), 'RUB');
+  assert.equal(formatMoney(1250, { currency: 'USD', signed: true }), '+1\u00a0250 $');
+  assert.equal(formatMoney(-40.5, { currency: 'EUR' }), '−40,50 €');
 });
 

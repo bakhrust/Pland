@@ -87,6 +87,7 @@ import type {
   FinanceCategory,
   FinanceCategoryKind,
   FinanceGoal,
+  FinanceCurrency,
   FinanceTransaction,
   FinanceTransactionKind,
   GoogleCalendarEvent,
@@ -132,11 +133,13 @@ import {
   toLocalDateTimeInput,
 } from './utils/dateUtils';
 import {
+  DEFAULT_FINANCE_CURRENCY,
   applyGoalContribution,
   createFinanceAccount,
   createFinanceCategory,
   createFinanceGoal,
   createFinanceTransaction,
+  sanitizeFinanceCurrency,
 } from './utils/financeLogic';
 import {
   adjustHabitDayCount,
@@ -157,6 +160,7 @@ const DEV_PREVIEW_FINANCE_ACCOUNTS_KEY = 'rst_dev_preview_fin_accounts_v1';
 const DEV_PREVIEW_FINANCE_CATEGORIES_KEY = 'rst_dev_preview_fin_categories_v1';
 const DEV_PREVIEW_FINANCE_TRANSACTIONS_KEY = 'rst_dev_preview_fin_transactions_v1';
 const DEV_PREVIEW_FINANCE_GOALS_KEY = 'rst_dev_preview_fin_goals_v1';
+const DEV_PREVIEW_FINANCE_CURRENCY_KEY = 'rst_dev_preview_fin_currency_v1';
 const OWNER_EMAIL = 'bakhrust@gmail.com';
 
 function isAuthorizedOwner(user: User | null): user is User {
@@ -337,6 +341,16 @@ export default function App() {
       ? loadDevPreviewFinanceList(DEV_PREVIEW_FINANCE_GOALS_KEY, createInitialFinanceGoals)
       : createInitialFinanceGoals()
   );
+  const [financeCurrency, setFinanceCurrency] = useState<FinanceCurrency>(() => {
+    if (isOfflineOrGuest) {
+      try {
+        return sanitizeFinanceCurrency(localStorage.getItem(DEV_PREVIEW_FINANCE_CURRENCY_KEY));
+      } catch {
+        return DEFAULT_FINANCE_CURRENCY;
+      }
+    }
+    return DEFAULT_FINANCE_CURRENCY;
+  });
   const activeBoard = useMemo(
     () => workspace.boards.find((b) => b.id === workspace.activeBoardId) ?? workspace.boards[0],
     [workspace]
@@ -442,6 +456,7 @@ export default function App() {
   const lastSyncedFinCategoriesRef = useRef<FinanceCategory[] | null>(null);
   const lastSyncedFinTransactionsRef = useRef<FinanceTransaction[] | null>(null);
   const lastSyncedFinGoalsRef = useRef<FinanceGoal[] | null>(null);
+  const lastSyncedFinCurrencyRef = useRef<FinanceCurrency | null>(null);
   const lastSyncedPrefsRef = useRef<string>('');
 
   const [calendars, setCalendars] = useState<GoogleCalendarMeta[]>([]);
@@ -657,6 +672,26 @@ export default function App() {
     }
   }, [financeGoals, googleUser, isOfflineOrGuest]);
 
+  useEffect(() => {
+    if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinCurrencyRef.current) {
+      if (lastSyncedFinCurrencyRef.current === financeCurrency) return;
+      lastSyncedFinCurrencyRef.current = financeCurrency;
+      void loadFirestoreWorkspaceModule()
+        .then((m) => m.saveUserPrefsToFirestore(googleUser.uid, { financeCurrency }))
+        .catch((err) => {
+          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
+        });
+      return;
+    }
+    if (isOfflineOrGuest && !googleUser) {
+      try {
+        localStorage.setItem(DEV_PREVIEW_FINANCE_CURRENCY_KEY, financeCurrency);
+      } catch {
+        // ignore
+      }
+    }
+  }, [financeCurrency, googleUser, isOfflineOrGuest]);
+
   // Apply dark class to document.documentElement
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -712,6 +747,7 @@ export default function App() {
       lastSyncedFinCategoriesRef.current = loaded.financeCategories;
       lastSyncedFinTransactionsRef.current = loaded.financeTransactions;
       lastSyncedFinGoalsRef.current = loaded.financeGoals;
+      lastSyncedFinCurrencyRef.current = loaded.financeCurrency;
       lastSyncedPrefsRef.current = JSON.stringify({
         visibleCalendarIds: loaded.visibleCalendarIds,
         targetCalendarId: loaded.targetCalendarId,
@@ -725,6 +761,7 @@ export default function App() {
       setFinanceCategories(loaded.financeCategories);
       setFinanceTransactions(loaded.financeTransactions);
       setFinanceGoals(loaded.financeGoals);
+      setFinanceCurrency(loaded.financeCurrency);
       setVisibleCalendarIds(loaded.visibleCalendarIds);
       setTargetCalendarId(loaded.targetCalendarId);
       setTheme(loaded.theme);
@@ -931,6 +968,7 @@ export default function App() {
     lastSyncedFinCategoriesRef.current = null;
     lastSyncedFinTransactionsRef.current = null;
     lastSyncedFinGoalsRef.current = null;
+    lastSyncedFinCurrencyRef.current = null;
     lastSyncedPrefsRef.current = '';
     setGoogleUser(null);
     setNeedsAuth(true);
@@ -946,6 +984,7 @@ export default function App() {
     setFinanceCategories(createInitialFinanceCategories());
     setFinanceTransactions(createInitialFinanceTransactions(new Date()));
     setFinanceGoals(createInitialFinanceGoals());
+    setFinanceCurrency(DEFAULT_FINANCE_CURRENCY);
     try {
       localStorage.removeItem('pland_workspace_v1');
       localStorage.removeItem('pland_board_v1');
@@ -958,6 +997,7 @@ export default function App() {
       localStorage.removeItem(DEV_PREVIEW_FINANCE_CATEGORIES_KEY);
       localStorage.removeItem(DEV_PREVIEW_FINANCE_TRANSACTIONS_KEY);
       localStorage.removeItem(DEV_PREVIEW_FINANCE_GOALS_KEY);
+      localStorage.removeItem(DEV_PREVIEW_FINANCE_CURRENCY_KEY);
     } catch {
       // ignore
     }
@@ -1931,6 +1971,8 @@ export default function App() {
               categories={financeCategories}
               transactions={financeTransactions}
               goals={financeGoals}
+              currency={financeCurrency}
+              onChangeCurrency={setFinanceCurrency}
               onSaveTransaction={handleSaveFinanceTransaction}
               onDeleteTransaction={handleDeleteFinanceTransaction}
               onSaveCategory={handleSaveFinanceCategory}

@@ -34,6 +34,11 @@ service cloud.firestore {
       return color is string && color in ['blue', 'emerald', 'violet', 'amber', 'rose'];
     }
 
+    function isValidFinanceCurrency(currency) {
+      return currency is string
+        && currency in ['RUB', 'USD', 'EUR', 'KZT', 'BYN', 'GEL', 'TRY', 'AED', 'GBP', 'CNY'];
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -65,6 +70,7 @@ service cloud.firestore {
           'theme',
           'notesSeeded',
           'financeSeeded',
+          'financeCurrency',
           'createdAt',
           'updatedAt'
         ])
@@ -79,6 +85,7 @@ service cloud.firestore {
         && data.theme is string && data.theme in ['light', 'dark']
         && (!('notesSeeded' in data) || data.notesSeeded is bool)
         && (!('financeSeeded' in data) || data.financeSeeded is bool)
+        && (!('financeCurrency' in data) || isValidFinanceCurrency(data.financeCurrency))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -518,8 +525,9 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['notesSeeded', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['financeSeeded', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['financeCurrency', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['visibleCalendarIds', 'targetCalendarId', 'updatedAt']) ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'activeBoardId', 'visibleCalendarIds', 'targetCalendarId', 'theme', 'updatedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'activeBoardId', 'visibleCalendarIds', 'targetCalendarId', 'theme', 'financeCurrency', 'updatedAt'])
         );
 
       allow delete: if isValidId(userId) && isOwner(userId);

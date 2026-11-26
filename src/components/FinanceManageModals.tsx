@@ -5,9 +5,11 @@ import type {
   FinanceAccountType,
   FinanceCategory,
   FinanceCategoryKind,
+  FinanceCurrency,
   FinanceGoal,
   LabelColor,
 } from '../types/planner';
+import { DEFAULT_FINANCE_CURRENCY, getCurrencyMeta } from '../utils/financeLogic';
 
 const COLOR_OPTIONS: { id: LabelColor; label: string; dotCls: string }[] = [
   { id: 'blue', label: 'Синий', dotCls: 'bg-blue-600' },
@@ -21,6 +23,7 @@ const COLOR_OPTIONS: { id: LabelColor; label: string; dotCls: string }[] = [
 interface FinanceCategoryModalProps {
   isOpen: boolean;
   category: FinanceCategory | null;
+  currency?: FinanceCurrency;
   defaultKind?: FinanceCategoryKind;
   onClose: () => void;
   onSave: (payload: {
@@ -36,11 +39,13 @@ interface FinanceCategoryModalProps {
 export function FinanceCategoryModal({
   isOpen,
   category,
+  currency = DEFAULT_FINANCE_CURRENCY,
   defaultKind = 'expense',
   onClose,
   onSave,
   onDelete,
 }: FinanceCategoryModalProps) {
+  const currencySymbol = getCurrencyMeta(currency).symbol;
   const [name, setName] = useState('');
   const [kind, setKind] = useState<FinanceCategoryKind>(defaultKind);
   const [limitStr, setLimitStr] = useState('');
@@ -166,7 +171,7 @@ export function FinanceCategoryModal({
           {kind === 'expense' && (
             <div>
               <label htmlFor="fcat-limit" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Месячный лимит (₽, необязательно)
+                Месячный лимит ({currencySymbol}, необязательно)
               </label>
               <input
                 id="fcat-limit"
@@ -251,6 +256,7 @@ export function FinanceCategoryModal({
 interface FinanceAccountModalProps {
   isOpen: boolean;
   account: FinanceAccount | null;
+  currency?: FinanceCurrency;
   canDelete: boolean;
   onClose: () => void;
   onSave: (payload: {
@@ -266,11 +272,13 @@ interface FinanceAccountModalProps {
 export function FinanceAccountModal({
   isOpen,
   account,
+  currency = DEFAULT_FINANCE_CURRENCY,
   canDelete,
   onClose,
   onSave,
   onDelete,
 }: FinanceAccountModalProps) {
+  const currencySymbol = getCurrencyMeta(currency).symbol;
   const [title, setTitle] = useState('');
   const [type, setType] = useState<FinanceAccountType>('card');
   const [initialBalanceStr, setInitialBalanceStr] = useState('0');
@@ -384,7 +392,7 @@ export function FinanceAccountModal({
 
             <div>
               <label htmlFor="facc-balance" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Начальный остаток (₽)
+                Начальный остаток ({currencySymbol})
               </label>
               <input
                 id="facc-balance"
@@ -468,6 +476,7 @@ export function FinanceAccountModal({
 interface FinanceGoalModalProps {
   isOpen: boolean;
   goal: FinanceGoal | null;
+  currency?: FinanceCurrency;
   onClose: () => void;
   onSave: (payload: {
     id?: string;
@@ -483,10 +492,12 @@ interface FinanceGoalModalProps {
 export function FinanceGoalModal({
   isOpen,
   goal,
+  currency = DEFAULT_FINANCE_CURRENCY,
   onClose,
   onSave,
   onDelete,
 }: FinanceGoalModalProps) {
+  const currencySymbol = getCurrencyMeta(currency).symbol;
   const [title, setTitle] = useState('');
   const [targetStr, setTargetStr] = useState('');
   const [currentStr, setCurrentStr] = useState('0');
@@ -592,7 +603,7 @@ export function FinanceGoalModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label htmlFor="fgoal-target" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Цель (₽)
+                Цель ({currencySymbol})
               </label>
               <input
                 id="fgoal-target"
@@ -611,7 +622,7 @@ export function FinanceGoalModal({
 
             <div>
               <label htmlFor="fgoal-current" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Уже отложено (₽)
+                Уже отложено ({currencySymbol})
               </label>
               <input
                 id="fgoal-current"

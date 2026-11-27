@@ -1495,8 +1495,13 @@ export function FinanceView({
                                 </span>
                               </div>
                               <p className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
-                                {ACCOUNT_TYPE_LABELS[acc.type]} · Нач. остаток:{' '}
-                                {formatMoney(acc.initialBalance, { currency: accCur })}
+                                {ACCOUNT_TYPE_LABELS[acc.type]}
+                                {Math.abs(currentBalance - acc.initialBalance) > 0.001
+                                  ? ` · Нач.: ${formatMoney(acc.initialBalance, { currency: accCur })} · Операции: ${formatMoney(
+                                      currentBalance - acc.initialBalance,
+                                      { currency: accCur, signed: true }
+                                    )}`
+                                  : ''}
                               </p>
                             </div>
                           </div>
@@ -1712,6 +1717,11 @@ export function FinanceView({
       <FinanceAccountModal
         isOpen={accModal.isOpen}
         account={accModal.account}
+        currentBalance={
+          accModal.account
+            ? accountBalances.balancesById.get(accModal.account.id) ?? accModal.account.initialBalance
+            : undefined
+        }
         currency={currency}
         canDelete={accounts.length > 1}
         onClose={() => setAccModal({ isOpen: false, account: null })}

@@ -14,7 +14,9 @@ import {
   DEFAULT_FINANCE_RATES,
   FINANCE_CURRENCIES,
   convertMoney,
+  formatMoney,
   getCurrencyMeta,
+  roundMoney,
   sanitizeFinanceCurrency,
   sanitizeFinanceRates,
 } from '../utils/financeLogic';
@@ -264,6 +266,7 @@ export function FinanceCategoryModal({
 interface FinanceAccountModalProps {
   isOpen: boolean;
   account: FinanceAccount | null;
+  currentBalance?: number;
   currency?: FinanceCurrency;
   canDelete: boolean;
   onClose: () => void;
@@ -281,6 +284,7 @@ interface FinanceAccountModalProps {
 export function FinanceAccountModal({
   isOpen,
   account,
+  currentBalance,
   currency = DEFAULT_FINANCE_CURRENCY,
   canDelete,
   onClose,
@@ -290,31 +294,76 @@ export function FinanceAccountModal({
   const [title, setTitle] = useState('');
   const [type, setType] = useState<FinanceAccountType>('card');
   const [accCurrency, setAccCurrency] = useState<FinanceCurrency>(currency);
-  const [initialBalanceStr, setInitialBalanceStr] = useState('0');
+  const [balanceMode, setBalanceMode] = useState<'current' | 'initial'>('current');
+  const [balanceStr, setBalanceStr] = useState('0');
   const [color, setColor] = useState<LabelColor>('blue');
   const [error, setError] = useState<string | null>(null);
+
+  const resolvedCurrentBalance = account
+    ? typeof currentBalance === 'number' && Number.isFinite(currentBalance)
+      ? roundMoney(currentBalance)
+      : roundMoney(account.initialBalance)
+    : 0;
+  const txDelta = account ? roundMoney(resolvedCurrentBalance - account.initialBalance) : 0;
 
   useEffect(() => {
     if (!isOpen) return;
     setError(null);
     if (account) {
+      const nextCurrent =
+        typeof currentBalance === 'number' && Number.isFinite(currentBalance)
+          ? roundMoney(currentBalance)
+          : roundMoney(account.initialBalance);
       setTitle(account.title);
       setType(account.type);
       setAccCurrency(sanitizeFinanceCurrency(account.currency));
-      setInitialBalanceStr(String(account.initialBalance));
+      setBalanceMode('current');
+      setBalanceStr(String(nextCurrent));
       setColor(account.color === 'slate' ? 'blue' : account.color);
     } else {
       setTitle('');
       setType('card');
       setAccCurrency(sanitizeFinanceCurrency(currency));
-      setInitialBalanceStr('0');
+      setBalanceMode('initial');
+      setBalanceStr('0');
       setColor('blue');
     }
-  }, [isOpen, account, currency]);
+  }, [isOpen, account, currentBalance, currency]);
 
   if (!isOpen) return null;
 
   const accCurrencySymbol = getCurrencyMeta(accCurrency).symbol;
+  const parsedInput = Number((balanceStr || '0').replace(/\s+/g, '').replace(',', '.'));
+  const hasValidNumber = Number.isFinite(parsedInput);
+  const computedInitialPreview =
+    account && balanceMode === 'current' && hasValidNumber
+      ? roundMoney(parsedInput - txDelta)
+      : hasValidNumber
+      ? roundMoney(parsedInput)
+      : 0;
+  const computedCurrentPreview =
+    account && balanceMode === 'initial' && hasValidNumber
+      ? roundMoney(parsedInput + txDelta)
+      : hasValidNumber
+      ? roundMoney(parsedInput)
+      : 0;
+
+  const handleSwitchBalanceMode = (nextMode: 'current' | 'initial') => {
+    if (nextMode === balanceMode || !account) return;
+    if (hasValidNumber) {
+      const converted =
+        nextMode === 'initial'
+          ? roundMoney(parsedInput - txDelta)
+          : roundMoney(parsedInput + txDelta);
+      setBalanceStr(String(converted));
+    } else {
+      setBalanceStr(
+        String(nextMode === 'initial' ? roundMoney(account.initialBalance) : resolvedCurrentBalance)
+      );
+    }
+    setBalanceMode(nextMode);
+    setError(null);
+  };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -323,9 +372,16 @@ export function FinanceAccountModal({
       setError('Введите название счёта.');
       return;
     }
-    const num = Number((initialBalanceStr || '0').replace(/\s+/g, '').replace(',', '.'));
-    if (!Number.isFinite(num) || Math.abs(num) > 1_000_000_000) {
-      setError('Укажите корректный начальный баланс.');
+    const rawNum = Number((balanceStr || '0').replace(/\s+/g, '').replace(',', '.'));
+    if (!Number.isFinite(rawNum) || Math.abs(rawNum) > 1_000_000_000) {
+      setError('Укажите корректный остаток.');
+      return;
+    }
+
+    const nextInitialBalance =
+      account && balanceMode === 'current' ? roundMoney(rawNum - txDelta) : roundMoney(rawNum);
+    if (Math.abs(nextInitialBalance) > 1_000_000_000) {
+      setError('Итоговый начальный остаток выходит за допустимый предел.');
       return;
     }
 
@@ -334,7 +390,7 @@ export function FinanceAccountModal({
       title: cleanTitle,
       type,
       currency: accCurrency,
-      initialBalance: num,
+      initialBalance: nextInitialBalance,
       color,
     });
   };
@@ -424,22 +480,65 @@ export function FinanceAccountModal({
             </div>
           </div>
 
-          <div>
-            <label htmlFor="facc-balance" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              Начальный остаток ({accCurrencySymbol})
-            </label>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="facc-balance" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                {account && balanceMode === 'current'
+                  ? `Текущий остаток (${accCurrencySymbol})`
+                  : `Начальный остаток (${accCurrencySymbol})`}
+              </label>
+              {account && txDelta !== 0 && (
+                <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg text-[11px]">
+                  <button
+                    type="button"
+                    data-testid="facc-mode-current"
+                    onClick={() => handleSwitchBalanceMode('current')}
+                    className={`px-2 py-0.5 rounded-md font-medium cursor-pointer ${
+                      balanceMode === 'current'
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    Текущий
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="facc-mode-initial"
+                    onClick={() => handleSwitchBalanceMode('initial')}
+                    className={`px-2 py-0.5 rounded-md font-medium cursor-pointer ${
+                      balanceMode === 'initial'
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    Начальный
+                  </button>
+                </div>
+              )}
+            </div>
             <input
               id="facc-balance"
               data-testid="facc-balance-input"
               type="text"
               inputMode="decimal"
-              value={initialBalanceStr}
+              value={balanceStr}
               onChange={(e) => {
-                setInitialBalanceStr(e.target.value);
+                setBalanceStr(e.target.value);
                 setError(null);
               }}
               className="w-full px-3.5 py-2.5 text-xs font-mono tabular-nums bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
             />
+            {account && txDelta !== 0 && hasValidNumber && (
+              <p
+                data-testid="facc-balance-breakdown"
+                className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums"
+              >
+                Операции по счёту: {formatMoney(txDelta, { currency: accCurrency, signed: true })} ·{' '}
+                {balanceMode === 'current'
+                  ? `Нач. остаток станет: ${formatMoney(computedInitialPreview, { currency: accCurrency })}`
+                  : `Текущий остаток станет: ${formatMoney(computedCurrentPreview, { currency: accCurrency })}`}
+              </p>
+            )}
           </div>
 
           <div>

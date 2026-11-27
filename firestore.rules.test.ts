@@ -14,13 +14,8 @@ test('firestore.rules includes all Eight Pillars and Denial-of-Wallet guards', (
   assert.match(rulesContent, /request\.auth\.token\.email == 'bakhrust@gmail\.com'/);
   assert.match(rulesContent, /request\.auth\.uid == userId/);
 
-  // Pillar 2 & 3: Validation helpers + ID regex hardening + bounded queries
+  // Pillar 2 & 3: Validation helpers + ID regex hardening + financeRates key allowlist
   assert.match(rulesContent, /function isValidId\(id\)/);
-  assert.match(rulesContent, /function isBoundedQuery\(maxLimit\)/);
-  assert.match(rulesContent, /request\.query\.limit != null/);
-  assert.match(rulesContent, /isBoundedQuery\(50\)/);
-  assert.match(rulesContent, /isBoundedQuery\(500\)/);
-  assert.match(rulesContent, /isBoundedQuery\(2000\)/);
   assert.match(rulesContent, /data\.financeRates\.keys\(\)\.hasOnly\(/);
   assert.match(rulesContent, /function isValidUserProfile\(/);
   assert.match(rulesContent, /function isValidBoardDoc\(/);

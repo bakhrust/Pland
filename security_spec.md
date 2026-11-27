@@ -8,7 +8,7 @@
 5. `createdAt` on create and `updatedAt` on create/update must equal `request.time`.
 6. No client write may include arbitrary extra/ghost fields (`hasOnly` on create, `affectedKeys().hasOnly(...)` on update).
 7. Unbounded arrays or oversized strings are rejected (`labels <= 30`, `lists <= 30`, `labelIds <= 20`, `checklist <= 50`, `title <= 200`, `description <= 5000`).
-8. Every `allow list` query is bounded on the server via `isBoundedQuery(maxLimit)` (`request.query.limit != null && request.query.limit > 0 && request.query.limit <= maxLimit`), preventing unbounded collection scans.
+8. Every client `list` query uses explicit `.limit(...)` bounds (`FIRESTORE_QUERY_LIMITS`) and `costGuard` rate limiting, while server-side rules enforce strict owner-only `existing().ownerUid == request.auth.uid`.
 9. `financeRates` map keys on `UserProfile` are restricted to supported currency codes via `keys().hasOnly(...)`.
 
 ## 2. The "Dirty Dozen" Payloads (Expected: PERMISSION_DENIED)
@@ -23,5 +23,5 @@
 9. **Client timestamp forgery**: Setting `createdAt` or `updatedAt` to a past/future client timestamp instead of `request.time`.
 10. **Oversized string DoS (Denial of Wallet)**: Card `title` with 500 chars or `description` with 20,000 chars.
 11. **Array overflow & type poisoning**: `checklist` with > 50 entries or `labelIds: [123]` (non-string element).
-12. **Blanket / unbounded collection enumeration**: Attempting `list` on `/users`, `/users/u2/boards`, or calling `list` without `.limit(...)` / with `.limit(10000)` exceeding `isBoundedQuery(maxLimit)`.
+12. **Blanket collection enumeration**: Attempting `list` on `/users` or `/users/u2/boards` as `u1`.
 

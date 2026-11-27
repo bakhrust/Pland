@@ -45,15 +45,15 @@ function initFirebaseAppCheck(): AppCheck | null {
     }
 
     const providerType = String(
-      import.meta.env?.VITE_FIREBASE_APP_CHECK_PROVIDER ?? 'v3'
+      import.meta.env?.VITE_FIREBASE_APP_CHECK_PROVIDER ?? 'enterprise'
     )
       .trim()
       .toLowerCase();
 
     const provider =
-      providerType === 'enterprise'
-        ? new ReCaptchaEnterpriseProvider(siteKey)
-        : new ReCaptchaV3Provider(siteKey);
+      providerType === 'v3'
+        ? new ReCaptchaV3Provider(siteKey)
+        : new ReCaptchaEnterpriseProvider(siteKey);
 
     appCheckInstance = initializeAppCheck(app, {
       provider,

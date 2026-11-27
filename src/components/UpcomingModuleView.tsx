@@ -29,8 +29,8 @@ const MODULE_META: Record<
     accentClass: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800',
   },
   sport: {
-    title: 'Спорт и тренировки',
-    subtitle: 'Дневник тренировок, подходов, весов и личного прогресса.',
+    title: 'Здоровье и фитнес',
+    subtitle: 'Дневник тренировок, активности, самочувствия и личного прогресса.',
     stage: 'Этап 4',
     points: [
       'Готовые программы тренировок и быстрый старт занятия',

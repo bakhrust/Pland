@@ -393,7 +393,7 @@ export function createInitialNotes(referenceTime = Date.now()): NotePage[] {
         {
           id: 'blk-r-5',
           type: 'numbered',
-          content: 'Спорт, подходы, веса и дневник тренировок',
+          content: 'Здоровье, подходы, веса и дневник тренировок',
           checked: false,
           indent: 0,
         },

@@ -30,7 +30,7 @@ const SECTION_ITEMS: Array<{ id: MainSection; label: string; Icon: typeof Calend
   { id: 'habits', label: 'Привычки', Icon: CheckCircle2 },
   { id: 'notes', label: 'Заметки', Icon: FileText },
   { id: 'finance', label: 'Финансы', Icon: Wallet },
-  { id: 'sport', label: 'Спорт', Icon: Dumbbell },
+  { id: 'sport', label: 'Здоровье', Icon: Dumbbell },
 ];
 
 export function getMainSection(viewMode: ViewMode): MainSection {

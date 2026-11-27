@@ -192,12 +192,15 @@ export type FinanceCurrency =
   | 'GBP'
   | 'CNY';
 
+export type FinanceExchangeRates = Partial<Record<FinanceCurrency, number>>;
+
 export type FinanceAccountType = 'card' | 'cash' | 'savings' | 'other';
 
 export interface FinanceAccount {
   id: string;
   title: string;
   type: FinanceAccountType;
+  currency: FinanceCurrency;
   initialBalance: number;
   color: LabelColor;
   order: number;
@@ -209,7 +212,7 @@ export interface FinanceCategory {
   id: string;
   name: string;
   kind: FinanceCategoryKind;
-  /** Monthly spending limit in active currency for expense categories (null = unlimited) */
+  /** Monthly spending limit in active base currency for expense categories (null = unlimited) */
   monthlyLimit: number | null;
   color: LabelColor;
   order: number;
@@ -221,6 +224,8 @@ export interface FinanceTransaction {
   id: string;
   kind: FinanceTransactionKind;
   amount: number;
+  /** Credited amount in target account currency for cross-currency transfers (null otherwise) */
+  toAmount?: number | null;
   categoryId: string | null;
   accountId: string;
   /** Target account ID when kind === 'transfer', null otherwise */

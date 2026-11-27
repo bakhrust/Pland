@@ -134,12 +134,14 @@ import {
 } from './utils/dateUtils';
 import {
   DEFAULT_FINANCE_CURRENCY,
+  DEFAULT_FINANCE_RATES,
   applyGoalContribution,
   createFinanceAccount,
   createFinanceCategory,
   createFinanceGoal,
   createFinanceTransaction,
   sanitizeFinanceCurrency,
+  sanitizeFinanceRates,
 } from './utils/financeLogic';
 import {
   adjustHabitDayCount,
@@ -151,6 +153,7 @@ import {
   createNotePage,
   removeFolderAndPromoteChildren,
 } from './utils/notesLogic';
+import { isTransientFirestoreError } from './utils/firestoreErrors';
 
 const DEV_PREVIEW_STORAGE_KEY = 'pland_dev_preview_v1';
 const DEV_PREVIEW_HABITS_KEY = 'pland_dev_preview_habits_v1';
@@ -161,6 +164,7 @@ const DEV_PREVIEW_FINANCE_CATEGORIES_KEY = 'rst_dev_preview_fin_categories_v1';
 const DEV_PREVIEW_FINANCE_TRANSACTIONS_KEY = 'rst_dev_preview_fin_transactions_v1';
 const DEV_PREVIEW_FINANCE_GOALS_KEY = 'rst_dev_preview_fin_goals_v1';
 const DEV_PREVIEW_FINANCE_CURRENCY_KEY = 'rst_dev_preview_fin_currency_v1';
+const DEV_PREVIEW_FINANCE_RATES_KEY = 'rst_dev_preview_fin_rates_v1';
 const OWNER_EMAIL = 'bakhrust@gmail.com';
 
 function isAuthorizedOwner(user: User | null): user is User {
@@ -321,7 +325,12 @@ export default function App() {
   );
   const [financeAccounts, setFinanceAccounts] = useState<FinanceAccount[]>(() =>
     isOfflineOrGuest
-      ? loadDevPreviewFinanceList(DEV_PREVIEW_FINANCE_ACCOUNTS_KEY, createInitialFinanceAccounts)
+      ? loadDevPreviewFinanceList(DEV_PREVIEW_FINANCE_ACCOUNTS_KEY, createInitialFinanceAccounts).map(
+          (acc) => ({
+            ...acc,
+            currency: sanitizeFinanceCurrency(acc.currency),
+          })
+        )
       : createInitialFinanceAccounts()
   );
   const [financeCategories, setFinanceCategories] = useState<FinanceCategory[]>(() =>
@@ -350,6 +359,17 @@ export default function App() {
       }
     }
     return DEFAULT_FINANCE_CURRENCY;
+  });
+  const [financeRates, setFinanceRates] = useState<Record<FinanceCurrency, number>>(() => {
+    if (isOfflineOrGuest) {
+      try {
+        const raw = localStorage.getItem(DEV_PREVIEW_FINANCE_RATES_KEY);
+        if (raw) return sanitizeFinanceRates(JSON.parse(raw));
+      } catch {
+        return { ...DEFAULT_FINANCE_RATES };
+      }
+    }
+    return { ...DEFAULT_FINANCE_RATES };
   });
   const activeBoard = useMemo(
     () => workspace.boards.find((b) => b.id === workspace.activeBoardId) ?? workspace.boards[0],
@@ -457,6 +477,7 @@ export default function App() {
   const lastSyncedFinTransactionsRef = useRef<FinanceTransaction[] | null>(null);
   const lastSyncedFinGoalsRef = useRef<FinanceGoal[] | null>(null);
   const lastSyncedFinCurrencyRef = useRef<FinanceCurrency | null>(null);
+  const lastSyncedFinRatesRef = useRef<string | null>(null);
   const lastSyncedPrefsRef = useRef<string>('');
 
   const [calendars, setCalendars] = useState<GoogleCalendarMeta[]>([]);
@@ -484,6 +505,17 @@ export default function App() {
     throw fatalFirestoreError;
   }
 
+  const handleCloudSyncError = useCallback((err: unknown) => {
+    if (isTransientFirestoreError(err)) {
+      setNotice({
+        kind: 'error',
+        text: 'Нет стабильного соединения с облаком — изменения сохраняются локально и синхронизируются при восстановлении сети.',
+      });
+      return;
+    }
+    setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
+  }, []);
+
   // Test Firestore connectivity once a user is authenticated
   useEffect(() => {
     if (googleUser) {
@@ -499,9 +531,7 @@ export default function App() {
       lastSyncedWorkspaceRef.current = workspace;
       void loadFirestoreWorkspaceModule()
         .then((m) => m.syncWorkspaceChangesToFirestore(googleUser.uid, prev, workspace))
-        .catch((err) => {
-          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-        });
+        .catch(handleCloudSyncError);
       return;
     }
 
@@ -522,9 +552,7 @@ export default function App() {
       lastSyncedHabitsRef.current = habits;
       void loadFirestoreWorkspaceModule()
         .then((m) => m.syncHabitsChangesToFirestore(googleUser.uid, prev, habits))
-        .catch((err) => {
-          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-        });
+        .catch(handleCloudSyncError);
       return;
     }
 
@@ -535,7 +563,7 @@ export default function App() {
         // ignore storage quota errors
       }
     }
-  }, [habits, googleUser, isOfflineOrGuest]);
+  }, [habits, googleUser, isOfflineOrGuest, handleCloudSyncError]);
 
   // Sync notebook folders to Firestore or local preview storage
   useEffect(() => {
@@ -545,9 +573,7 @@ export default function App() {
       lastSyncedNoteFoldersRef.current = noteFolders;
       void loadFirestoreWorkspaceModule()
         .then((m) => m.syncNoteFoldersChangesToFirestore(googleUser.uid, prev, noteFolders))
-        .catch((err) => {
-          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-        });
+        .catch(handleCloudSyncError);
       return;
     }
 
@@ -558,7 +584,7 @@ export default function App() {
         // ignore storage quota errors
       }
     }
-  }, [noteFolders, googleUser, isOfflineOrGuest]);
+  }, [noteFolders, googleUser, isOfflineOrGuest, handleCloudSyncError]);
 
   // Debounced sync for Notion-style notes (avoids writing to Firestore on every keystroke)
   useEffect(() => {
@@ -569,9 +595,7 @@ export default function App() {
         lastSyncedNotesRef.current = notes;
         void loadFirestoreWorkspaceModule()
           .then((m) => m.syncNotesChangesToFirestore(googleUser.uid, prev, notes))
-          .catch((err) => {
-            setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-          });
+          .catch(handleCloudSyncError);
       }, 500);
       return () => clearTimeout(timer);
     }
@@ -583,7 +607,7 @@ export default function App() {
         // ignore storage quota errors
       }
     }
-  }, [notes, googleUser, isOfflineOrGuest]);
+  }, [notes, googleUser, isOfflineOrGuest, handleCloudSyncError]);
 
   // Sync finance accounts, categories, transactions, and goals to Firestore or local preview storage
   useEffect(() => {
@@ -593,9 +617,7 @@ export default function App() {
       lastSyncedFinAccountsRef.current = financeAccounts;
       void loadFirestoreWorkspaceModule()
         .then((m) => m.syncFinanceAccountsChangesToFirestore(googleUser.uid, prev, financeAccounts))
-        .catch((err) => {
-          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-        });
+        .catch(handleCloudSyncError);
       return;
     }
     if (isOfflineOrGuest && !googleUser) {
@@ -605,7 +627,7 @@ export default function App() {
         // ignore
       }
     }
-  }, [financeAccounts, googleUser, isOfflineOrGuest]);
+  }, [financeAccounts, googleUser, isOfflineOrGuest, handleCloudSyncError]);
 
   useEffect(() => {
     if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinCategoriesRef.current) {
@@ -614,9 +636,7 @@ export default function App() {
       lastSyncedFinCategoriesRef.current = financeCategories;
       void loadFirestoreWorkspaceModule()
         .then((m) => m.syncFinanceCategoriesChangesToFirestore(googleUser.uid, prev, financeCategories))
-        .catch((err) => {
-          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-        });
+        .catch(handleCloudSyncError);
       return;
     }
     if (isOfflineOrGuest && !googleUser) {
@@ -626,7 +646,7 @@ export default function App() {
         // ignore
       }
     }
-  }, [financeCategories, googleUser, isOfflineOrGuest]);
+  }, [financeCategories, googleUser, isOfflineOrGuest, handleCloudSyncError]);
 
   useEffect(() => {
     if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinTransactionsRef.current) {
@@ -637,9 +657,7 @@ export default function App() {
         .then((m) =>
           m.syncFinanceTransactionsChangesToFirestore(googleUser.uid, prev, financeTransactions)
         )
-        .catch((err) => {
-          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-        });
+        .catch(handleCloudSyncError);
       return;
     }
     if (isOfflineOrGuest && !googleUser) {
@@ -649,7 +667,7 @@ export default function App() {
         // ignore
       }
     }
-  }, [financeTransactions, googleUser, isOfflineOrGuest]);
+  }, [financeTransactions, googleUser, isOfflineOrGuest, handleCloudSyncError]);
 
   useEffect(() => {
     if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinGoalsRef.current) {
@@ -658,9 +676,7 @@ export default function App() {
       lastSyncedFinGoalsRef.current = financeGoals;
       void loadFirestoreWorkspaceModule()
         .then((m) => m.syncFinanceGoalsChangesToFirestore(googleUser.uid, prev, financeGoals))
-        .catch((err) => {
-          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-        });
+        .catch(handleCloudSyncError);
       return;
     }
     if (isOfflineOrGuest && !googleUser) {
@@ -670,7 +686,7 @@ export default function App() {
         // ignore
       }
     }
-  }, [financeGoals, googleUser, isOfflineOrGuest]);
+  }, [financeGoals, googleUser, isOfflineOrGuest, handleCloudSyncError]);
 
   useEffect(() => {
     if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinCurrencyRef.current) {
@@ -678,9 +694,7 @@ export default function App() {
       lastSyncedFinCurrencyRef.current = financeCurrency;
       void loadFirestoreWorkspaceModule()
         .then((m) => m.saveUserPrefsToFirestore(googleUser.uid, { financeCurrency }))
-        .catch((err) => {
-          setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-        });
+        .catch(handleCloudSyncError);
       return;
     }
     if (isOfflineOrGuest && !googleUser) {
@@ -690,7 +704,26 @@ export default function App() {
         // ignore
       }
     }
-  }, [financeCurrency, googleUser, isOfflineOrGuest]);
+  }, [financeCurrency, googleUser, isOfflineOrGuest, handleCloudSyncError]);
+
+  useEffect(() => {
+    const serialized = JSON.stringify(financeRates);
+    if (googleUser && loadedUidRef.current === googleUser.uid && lastSyncedFinRatesRef.current !== null) {
+      if (lastSyncedFinRatesRef.current === serialized) return;
+      lastSyncedFinRatesRef.current = serialized;
+      void loadFirestoreWorkspaceModule()
+        .then((m) => m.saveUserPrefsToFirestore(googleUser.uid, { financeRates }))
+        .catch(handleCloudSyncError);
+      return;
+    }
+    if (isOfflineOrGuest && !googleUser) {
+      try {
+        localStorage.setItem(DEV_PREVIEW_FINANCE_RATES_KEY, serialized);
+      } catch {
+        // ignore
+      }
+    }
+  }, [financeRates, googleUser, isOfflineOrGuest, handleCloudSyncError]);
 
   // Apply dark class to document.documentElement
   useEffect(() => {
@@ -718,10 +751,8 @@ export default function App() {
           theme,
         })
       )
-      .catch((err) => {
-        setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
-      });
-  }, [visibleCalendarIds, targetCalendarId, theme, googleUser]);
+      .catch(handleCloudSyncError);
+  }, [visibleCalendarIds, targetCalendarId, theme, googleUser, handleCloudSyncError]);
 
   // Auto-dismiss notifications
   useEffect(() => {
@@ -748,6 +779,7 @@ export default function App() {
       lastSyncedFinTransactionsRef.current = loaded.financeTransactions;
       lastSyncedFinGoalsRef.current = loaded.financeGoals;
       lastSyncedFinCurrencyRef.current = loaded.financeCurrency;
+      lastSyncedFinRatesRef.current = JSON.stringify(loaded.financeRates);
       lastSyncedPrefsRef.current = JSON.stringify({
         visibleCalendarIds: loaded.visibleCalendarIds,
         targetCalendarId: loaded.targetCalendarId,
@@ -762,17 +794,45 @@ export default function App() {
       setFinanceTransactions(loaded.financeTransactions);
       setFinanceGoals(loaded.financeGoals);
       setFinanceCurrency(loaded.financeCurrency);
+      setFinanceRates(loaded.financeRates);
       setVisibleCalendarIds(loaded.visibleCalendarIds);
       setTargetCalendarId(loaded.targetCalendarId);
       setTheme(loaded.theme);
       return loaded.workspace;
     } catch (err) {
+      if (isTransientFirestoreError(err)) {
+        setNotice({
+          kind: 'error',
+          text: 'Сервер Firestore временно недоступен. Повторная попытка подключения…',
+        });
+        return null;
+      }
       setFatalFirestoreError(err instanceof Error ? err : new Error(String(err)));
       return null;
     } finally {
       setIsWorkspaceSyncing(false);
     }
   }, []);
+
+  // Automatically retry initial cloud workspace load when connectivity returns
+  useEffect(() => {
+    if (!googleUser || loadedUidRef.current === googleUser.uid) return;
+    const handleOnline = () => {
+      if (loadedUidRef.current !== googleUser.uid) {
+        void loadCloudWorkspaceForUser(googleUser);
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    const retryTimer = setTimeout(() => {
+      if (loadedUidRef.current !== googleUser.uid) {
+        void loadCloudWorkspaceForUser(googleUser);
+      }
+    }, 5000);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      clearTimeout(retryTimer);
+    };
+  }, [googleUser, isWorkspaceSyncing, loadCloudWorkspaceForUser]);
 
   // Initialize Firebase Auth listener
   useEffect(() => {
@@ -802,6 +862,8 @@ export default function App() {
         lastSyncedFinCategoriesRef.current = null;
         lastSyncedFinTransactionsRef.current = null;
         lastSyncedFinGoalsRef.current = null;
+        lastSyncedFinCurrencyRef.current = null;
+        lastSyncedFinRatesRef.current = null;
         lastSyncedPrefsRef.current = '';
         setGoogleUser(null);
         setNeedsAuth(true);
@@ -815,6 +877,8 @@ export default function App() {
           setFinanceCategories(createInitialFinanceCategories());
           setFinanceTransactions(createInitialFinanceTransactions(new Date()));
           setFinanceGoals(createInitialFinanceGoals());
+          setFinanceCurrency(DEFAULT_FINANCE_CURRENCY);
+          setFinanceRates({ ...DEFAULT_FINANCE_RATES });
         }
         setIsAuthChecked(true);
       }
@@ -969,6 +1033,7 @@ export default function App() {
     lastSyncedFinTransactionsRef.current = null;
     lastSyncedFinGoalsRef.current = null;
     lastSyncedFinCurrencyRef.current = null;
+    lastSyncedFinRatesRef.current = null;
     lastSyncedPrefsRef.current = '';
     setGoogleUser(null);
     setNeedsAuth(true);
@@ -985,6 +1050,7 @@ export default function App() {
     setFinanceTransactions(createInitialFinanceTransactions(new Date()));
     setFinanceGoals(createInitialFinanceGoals());
     setFinanceCurrency(DEFAULT_FINANCE_CURRENCY);
+    setFinanceRates({ ...DEFAULT_FINANCE_RATES });
     try {
       localStorage.removeItem('pland_workspace_v1');
       localStorage.removeItem('pland_board_v1');
@@ -998,6 +1064,7 @@ export default function App() {
       localStorage.removeItem(DEV_PREVIEW_FINANCE_TRANSACTIONS_KEY);
       localStorage.removeItem(DEV_PREVIEW_FINANCE_GOALS_KEY);
       localStorage.removeItem(DEV_PREVIEW_FINANCE_CURRENCY_KEY);
+      localStorage.removeItem(DEV_PREVIEW_FINANCE_RATES_KEY);
     } catch {
       // ignore
     }
@@ -1221,6 +1288,7 @@ export default function App() {
     id?: string;
     kind: FinanceTransactionKind;
     amount: number;
+    toAmount?: number | null;
     categoryId: string | null;
     accountId: string;
     toAccountId: string | null;
@@ -1293,6 +1361,7 @@ export default function App() {
     id?: string;
     title: string;
     type: FinanceAccountType;
+    currency: FinanceCurrency;
     initialBalance: number;
     color: LabelColor;
   }) => {
@@ -1972,7 +2041,9 @@ export default function App() {
               transactions={financeTransactions}
               goals={financeGoals}
               currency={financeCurrency}
+              rates={financeRates}
               onChangeCurrency={setFinanceCurrency}
+              onChangeRates={setFinanceRates}
               onSaveTransaction={handleSaveFinanceTransaction}
               onDeleteTransaction={handleDeleteFinanceTransaction}
               onSaveCategory={handleSaveFinanceCategory}

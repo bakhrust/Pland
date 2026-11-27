@@ -4,6 +4,7 @@ import type {
   FinanceCategory,
   FinanceCategoryKind,
   FinanceCurrency,
+  FinanceExchangeRates,
   FinanceGoal,
   FinanceTransaction,
   FinanceTransactionKind,
@@ -23,6 +24,19 @@ export interface FinanceCurrencyMeta {
 }
 
 export const DEFAULT_FINANCE_CURRENCY: FinanceCurrency = 'RUB';
+
+export const DEFAULT_FINANCE_RATES: Record<FinanceCurrency, number> = {
+  RUB: 1,
+  USD: 95,
+  EUR: 103,
+  KZT: 0.19,
+  BYN: 29,
+  GEL: 35,
+  TRY: 2.75,
+  AED: 25.8,
+  GBP: 120,
+  CNY: 13.1,
+};
 
 export const FINANCE_CURRENCIES: FinanceCurrencyMeta[] = [
   { code: 'RUB', symbol: '₽', label: 'Российский рубль' },
@@ -50,6 +64,53 @@ export function sanitizeFinanceCurrency(raw: unknown): FinanceCurrency {
 
 export function getCurrencyMeta(currency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY): FinanceCurrencyMeta {
   return CURRENCY_META_MAP.get(currency) ?? FINANCE_CURRENCIES[0];
+}
+
+export function sanitizeFinanceRates(raw: unknown): Record<FinanceCurrency, number> {
+  const result: Record<FinanceCurrency, number> = { ...DEFAULT_FINANCE_RATES };
+  if (raw && typeof raw === 'object') {
+    for (const meta of FINANCE_CURRENCIES) {
+      if (meta.code === 'RUB') continue;
+      const val = Number((raw as Record<string, unknown>)[meta.code]);
+      if (Number.isFinite(val) && val > 0 && val <= 1_000_000) {
+        result[meta.code] = Math.round(val * 10000) / 10000;
+      }
+    }
+  }
+  result.RUB = 1;
+  return result;
+}
+
+export function convertMoney(
+  amount: number,
+  fromCurrency: FinanceCurrency,
+  toCurrency: FinanceCurrency,
+  rates: FinanceExchangeRates = DEFAULT_FINANCE_RATES
+): number {
+  const safeAmount = roundMoney(amount);
+  if (fromCurrency === toCurrency || safeAmount === 0) return safeAmount;
+  const fromRate =
+    fromCurrency === 'RUB'
+      ? 1
+      : typeof rates[fromCurrency] === 'number' && (rates[fromCurrency] ?? 0) > 0
+      ? (rates[fromCurrency] as number)
+      : DEFAULT_FINANCE_RATES[fromCurrency];
+  const toRate =
+    toCurrency === 'RUB'
+      ? 1
+      : typeof rates[toCurrency] === 'number' && (rates[toCurrency] ?? 0) > 0
+      ? (rates[toCurrency] as number)
+      : DEFAULT_FINANCE_RATES[toCurrency];
+  return roundMoney((safeAmount * fromRate) / toRate);
+}
+
+export function getAccountCurrency(
+  accountId: string,
+  accounts: FinanceAccount[],
+  fallback: FinanceCurrency = DEFAULT_FINANCE_CURRENCY
+): FinanceCurrency {
+  const acc = accounts.find((a) => a.id === accountId);
+  return acc ? sanitizeFinanceCurrency(acc.currency) : fallback;
 }
 
 const RUSSIAN_MONTHS_NOMINATIVE = [
@@ -156,9 +217,13 @@ export function formatMoneyRUB(
 
 export function computeAccountBalances(
   accounts: FinanceAccount[],
-  transactions: FinanceTransaction[]
+  transactions: FinanceTransaction[],
+  baseCurrency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY,
+  rates: FinanceExchangeRates = DEFAULT_FINANCE_RATES
 ): {
   balancesById: Map<string, number>;
+  convertedBalancesById: Map<string, number>;
+  totalsByCurrency: { currency: FinanceCurrency; amount: number; count: number }[];
   totalBalance: number;
 } {
   const balancesById = new Map<string, number>();
@@ -182,18 +247,44 @@ export function computeAccountBalances(
       if (balancesById.has(tx.accountId)) {
         balancesById.set(tx.accountId, roundMoney((balancesById.get(tx.accountId) ?? 0) - amt));
       }
+      const creditAmt =
+        typeof tx.toAmount === 'number' && Number.isFinite(tx.toAmount) && tx.toAmount > 0
+          ? roundMoney(tx.toAmount)
+          : amt;
       if (tx.toAccountId && balancesById.has(tx.toAccountId)) {
-        balancesById.set(tx.toAccountId, roundMoney((balancesById.get(tx.toAccountId) ?? 0) + amt));
+        balancesById.set(
+          tx.toAccountId,
+          roundMoney((balancesById.get(tx.toAccountId) ?? 0) + creditAmt)
+        );
       }
     }
   }
 
+  const convertedBalancesById = new Map<string, number>();
+  const currencyMap = new Map<FinanceCurrency, { amount: number; count: number }>();
   let totalBalance = 0;
+
   for (const acc of accounts) {
-    totalBalance = roundMoney(totalBalance + (balancesById.get(acc.id) ?? 0));
+    const native = balancesById.get(acc.id) ?? 0;
+    const accCur = sanitizeFinanceCurrency(acc.currency);
+    const converted = convertMoney(native, accCur, baseCurrency, rates);
+    convertedBalancesById.set(acc.id, converted);
+    totalBalance = roundMoney(totalBalance + converted);
+
+    const prevCur = currencyMap.get(accCur) ?? { amount: 0, count: 0 };
+    currencyMap.set(accCur, {
+      amount: roundMoney(prevCur.amount + native),
+      count: prevCur.count + 1,
+    });
   }
 
-  return { balancesById, totalBalance };
+  const totalsByCurrency = Array.from(currencyMap.entries()).map(([currency, info]) => ({
+    currency,
+    amount: info.amount,
+    count: info.count,
+  }));
+
+  return { balancesById, convertedBalancesById, totalsByCurrency, totalBalance };
 }
 
 export interface MonthlyFinanceSummary {
@@ -225,19 +316,30 @@ export interface CategoryBudgetProgress {
 export function computeCategoryBudgetProgress(
   categories: FinanceCategory[],
   transactions: FinanceTransaction[],
-  monthKey: string
+  monthKey: string,
+  accounts: FinanceAccount[] = [],
+  baseCurrency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY,
+  rates: FinanceExchangeRates = DEFAULT_FINANCE_RATES
 ): CategoryBudgetProgress[] {
   const monthExpenses = transactions.filter(
     (tx) => tx.kind === 'expense' && getMonthKeyFromDate(tx.date) === monthKey
   );
-  const totalMonthExpense = monthExpenses.reduce((sum, tx) => sum + Math.max(0, tx.amount), 0);
+  const toBase = (tx: FinanceTransaction) =>
+    convertMoney(
+      Math.max(0, tx.amount),
+      getAccountCurrency(tx.accountId, accounts, baseCurrency),
+      baseCurrency,
+      rates
+    );
+
+  const totalMonthExpense = monthExpenses.reduce((sum, tx) => roundMoney(sum + toBase(tx)), 0);
 
   const spentByCategory = new Map<string, { spent: number; count: number }>();
   for (const tx of monthExpenses) {
     if (!tx.categoryId) continue;
     const prev = spentByCategory.get(tx.categoryId) ?? { spent: 0, count: 0 };
     spentByCategory.set(tx.categoryId, {
-      spent: roundMoney(prev.spent + Math.max(0, tx.amount)),
+      spent: roundMoney(prev.spent + toBase(tx)),
       count: prev.count + 1,
     });
   }
@@ -285,7 +387,10 @@ export function computeCategoryBudgetProgress(
 export function computeMonthlyFinanceSummary(
   transactions: FinanceTransaction[],
   categories: FinanceCategory[],
-  monthKey: string
+  monthKey: string,
+  accounts: FinanceAccount[] = [],
+  baseCurrency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY,
+  rates: FinanceExchangeRates = DEFAULT_FINANCE_RATES
 ): MonthlyFinanceSummary {
   let totalIncome = 0;
   let totalExpense = 0;
@@ -294,7 +399,12 @@ export function computeMonthlyFinanceSummary(
 
   for (const tx of transactions) {
     if (getMonthKeyFromDate(tx.date) !== monthKey) continue;
-    const amt = Math.max(0, tx.amount);
+    const amt = convertMoney(
+      Math.max(0, tx.amount),
+      getAccountCurrency(tx.accountId, accounts, baseCurrency),
+      baseCurrency,
+      rates
+    );
     if (tx.kind === 'income') {
       totalIncome = roundMoney(totalIncome + amt);
       incomeCount += 1;
@@ -308,7 +418,14 @@ export function computeMonthlyFinanceSummary(
   const savingsRatePercent =
     totalIncome > 0 ? Math.round(((totalIncome - totalExpense) / totalIncome) * 100) : 0;
 
-  const categoryProgress = computeCategoryBudgetProgress(categories, transactions, monthKey);
+  const categoryProgress = computeCategoryBudgetProgress(
+    categories,
+    transactions,
+    monthKey,
+    accounts,
+    baseCurrency,
+    rates
+  );
   let totalBudgetLimit = 0;
   let budgetedExpenseSpent = 0;
   let overBudgetCategoriesCount = 0;
@@ -354,7 +471,10 @@ export interface MonthlyTrendPoint {
 export function computeMonthlyTrendSeries(
   transactions: FinanceTransaction[],
   referenceMonthKey: string,
-  monthsCount = 6
+  monthsCount = 6,
+  accounts: FinanceAccount[] = [],
+  baseCurrency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY,
+  rates: FinanceExchangeRates = DEFAULT_FINANCE_RATES
 ): MonthlyTrendPoint[] {
   const count = Math.max(1, Math.min(24, monthsCount));
   const points: MonthlyTrendPoint[] = [];
@@ -365,8 +485,14 @@ export function computeMonthlyTrendSeries(
     let expense = 0;
     for (const tx of transactions) {
       if (getMonthKeyFromDate(tx.date) !== mKey) continue;
-      if (tx.kind === 'income') income = roundMoney(income + Math.max(0, tx.amount));
-      else if (tx.kind === 'expense') expense = roundMoney(expense + Math.max(0, tx.amount));
+      const amt = convertMoney(
+        Math.max(0, tx.amount),
+        getAccountCurrency(tx.accountId, accounts, baseCurrency),
+        baseCurrency,
+        rates
+      );
+      if (tx.kind === 'income') income = roundMoney(income + amt);
+      else if (tx.kind === 'expense') expense = roundMoney(expense + amt);
     }
     points.push({
       monthKey: mKey,
@@ -390,7 +516,10 @@ export interface DailyExpensePoint {
 
 export function computeDailyExpenseSeries(
   transactions: FinanceTransaction[],
-  monthKey: string
+  monthKey: string,
+  accounts: FinanceAccount[] = [],
+  baseCurrency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY,
+  rates: FinanceExchangeRates = DEFAULT_FINANCE_RATES
 ): DailyExpensePoint[] {
   const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
   if (!match) return [];
@@ -402,7 +531,13 @@ export function computeDailyExpenseSeries(
   for (const tx of transactions) {
     if (tx.kind !== 'expense') continue;
     if (getMonthKeyFromDate(tx.date) !== monthKey) continue;
-    dailyTotals.set(tx.date, roundMoney((dailyTotals.get(tx.date) ?? 0) + Math.max(0, tx.amount)));
+    const amt = convertMoney(
+      Math.max(0, tx.amount),
+      getAccountCurrency(tx.accountId, accounts, baseCurrency),
+      baseCurrency,
+      rates
+    );
+    dailyTotals.set(tx.date, roundMoney((dailyTotals.get(tx.date) ?? 0) + amt));
   }
 
   const points: DailyExpensePoint[] = [];
@@ -520,11 +655,12 @@ export function financeTransactionsToCsv(
   transactions: FinanceTransaction[],
   categories: FinanceCategory[],
   accounts: FinanceAccount[],
-  currency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY
+  baseCurrency: FinanceCurrency = DEFAULT_FINANCE_CURRENCY,
+  rates: FinanceExchangeRates = DEFAULT_FINANCE_RATES
 ): string {
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
-  const accMap = new Map(accounts.map((a) => [a.id, a.title]));
-  const currencyMeta = getCurrencyMeta(currency);
+  const accMap = new Map(accounts.map((a) => [a.id, a]));
+  const baseMeta = getCurrencyMeta(baseCurrency);
 
   const kindLabel: Record<FinanceTransactionKind, string> = {
     expense: 'Расход',
@@ -539,7 +675,9 @@ export function financeTransactionsToCsv(
       'Категория',
       'Счёт',
       'Счёт зачисления',
-      `Сумма (${currencyMeta.symbol})`,
+      'Сумма',
+      'Валюта',
+      `Эквивалент (${baseMeta.symbol})`,
       'Комментарий',
       'Регулярная',
     ]
@@ -554,8 +692,12 @@ export function financeTransactionsToCsv(
         : tx.categoryId
         ? catMap.get(tx.categoryId) ?? 'Без категории'
         : 'Без категории';
-    const accName = accMap.get(tx.accountId) ?? 'Счёт';
-    const toAccName = tx.toAccountId ? accMap.get(tx.toAccountId) ?? '' : '';
+    const acc = accMap.get(tx.accountId);
+    const accName = acc?.title ?? 'Счёт';
+    const txCurrency = acc ? sanitizeFinanceCurrency(acc.currency) : baseCurrency;
+    const toAccName = tx.toAccountId ? accMap.get(tx.toAccountId)?.title ?? '' : '';
+    const signedNative = tx.kind === 'expense' ? -Math.abs(tx.amount) : tx.amount;
+    const baseEq = convertMoney(signedNative, txCurrency, baseCurrency, rates);
 
     rows.push(
       [
@@ -564,7 +706,9 @@ export function financeTransactionsToCsv(
         catName,
         accName,
         toAccName,
-        tx.kind === 'expense' ? -Math.abs(tx.amount) : tx.amount,
+        signedNative,
+        txCurrency,
+        baseEq,
         tx.note,
         tx.isRecurring ? 'Да' : 'Нет',
       ]
@@ -580,6 +724,7 @@ export function createFinanceAccount(payload: {
   id?: string;
   title: string;
   type: FinanceAccountType;
+  currency?: FinanceCurrency;
   initialBalance: number;
   color: LabelColor;
   order: number;
@@ -588,6 +733,7 @@ export function createFinanceAccount(payload: {
     id: payload.id || `acc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     title: clampText(payload.title.trim() || 'Новый счёт', 80),
     type: FINANCE_ACCOUNT_TYPES.includes(payload.type) ? payload.type : 'card',
+    currency: sanitizeFinanceCurrency(payload.currency),
     initialBalance: Math.max(-1_000_000_000, Math.min(1_000_000_000, roundMoney(payload.initialBalance))),
     color: payload.color === 'slate' ? 'blue' : payload.color,
     order: Math.max(0, Math.min(1000, Math.round(payload.order))),
@@ -624,6 +770,7 @@ export function createFinanceTransaction(payload: {
   id?: string;
   kind: FinanceTransactionKind;
   amount: number;
+  toAmount?: number | null;
   categoryId: string | null;
   accountId: string;
   toAccountId?: string | null;
@@ -639,11 +786,19 @@ export function createFinanceTransaction(payload: {
     payload.date && /^\d{4}-\d{2}-\d{2}$/.test(payload.date)
       ? payload.date
       : toLocalDateKey(new Date());
+  const validToAmount =
+    safeKind === 'transfer' &&
+    typeof payload.toAmount === 'number' &&
+    Number.isFinite(payload.toAmount) &&
+    payload.toAmount > 0
+      ? Math.max(0.01, Math.min(1_000_000_000, roundMoney(payload.toAmount)))
+      : null;
 
   return {
     id: payload.id || `ftx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     kind: safeKind,
     amount: Math.max(0.01, Math.min(1_000_000_000, roundMoney(Math.abs(payload.amount) || 0))),
+    toAmount: validToAmount,
     categoryId: safeKind === 'transfer' ? null : payload.categoryId || null,
     accountId: payload.accountId,
     toAccountId: safeKind === 'transfer' ? payload.toAccountId || null : null,

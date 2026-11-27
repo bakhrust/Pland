@@ -71,6 +71,7 @@ service cloud.firestore {
           'notesSeeded',
           'financeSeeded',
           'financeCurrency',
+          'financeRates',
           'createdAt',
           'updatedAt'
         ])
@@ -86,6 +87,7 @@ service cloud.firestore {
         && (!('notesSeeded' in data) || data.notesSeeded is bool)
         && (!('financeSeeded' in data) || data.financeSeeded is bool)
         && (!('financeCurrency' in data) || isValidFinanceCurrency(data.financeCurrency))
+        && (!('financeRates' in data) || (data.financeRates is map && data.financeRates.size() <= 12))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -364,6 +366,7 @@ service cloud.firestore {
           'ownerUid',
           'title',
           'type',
+          'currency',
           'initialBalance',
           'color',
           'order',
@@ -375,6 +378,7 @@ service cloud.firestore {
         && data.ownerUid == request.auth.uid
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 80
         && data.type is string && data.type in ['card', 'cash', 'savings', 'other']
+        && (!('currency' in data) || isValidFinanceCurrency(data.currency))
         && data.initialBalance is number && data.initialBalance >= -1000000000 && data.initialBalance <= 1000000000
         && isValidColor(data.color)
         && data.order is number && data.order >= 0 && data.order <= 1000
@@ -438,6 +442,7 @@ service cloud.firestore {
           'ownerUid',
           'kind',
           'amount',
+          'toAmount',
           'categoryId',
           'accountId',
           'toAccountId',
@@ -453,6 +458,7 @@ service cloud.firestore {
         && data.ownerUid == request.auth.uid
         && data.kind is string && data.kind in ['expense', 'income', 'transfer']
         && data.amount is number && data.amount > 0 && data.amount <= 1000000000
+        && (!('toAmount' in data) || data.toAmount == null || (data.toAmount is number && data.toAmount > 0 && data.toAmount <= 1000000000))
         && (data.categoryId == null || isValidId(data.categoryId))
         && isValidId(data.accountId)
         && (data.toAccountId == null || (isValidId(data.toAccountId) && data.toAccountId != data.accountId))
@@ -526,8 +532,9 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['notesSeeded', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['financeSeeded', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['financeCurrency', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['financeRates', 'updatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly(['visibleCalendarIds', 'targetCalendarId', 'updatedAt']) ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'activeBoardId', 'visibleCalendarIds', 'targetCalendarId', 'theme', 'financeCurrency', 'updatedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'activeBoardId', 'visibleCalendarIds', 'targetCalendarId', 'theme', 'financeCurrency', 'financeRates', 'updatedAt'])
         );
 
       allow delete: if isValidId(userId) && isOwner(userId);
@@ -733,7 +740,7 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && (
-            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'type', 'initialBalance', 'color', 'order', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'type', 'currency', 'initialBalance', 'color', 'order', 'updatedAt'])
           );
 
         allow delete: if isValidId(userId) && isValidId(accountId) && isOwner(userId);
@@ -789,6 +796,7 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly([
               'kind',
               'amount',
+              'toAmount',
               'categoryId',
               'accountId',
               'toAccountId',

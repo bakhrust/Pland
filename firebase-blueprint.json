@@ -49,6 +49,10 @@
           "type": "string",
           "enum": ["RUB", "USD", "EUR", "KZT", "BYN", "GEL", "TRY", "AED", "GBP", "CNY"]
         },
+        "financeRates": {
+          "type": "object",
+          "description": "Exchange rates relative to RUB for multi-currency conversion (max 12 entries)."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -443,6 +447,10 @@
           "type": "string",
           "enum": ["card", "cash", "savings", "other"]
         },
+        "currency": {
+          "type": "string",
+          "enum": ["RUB", "USD", "EUR", "KZT", "BYN", "GEL", "TRY", "AED", "GBP", "CNY"]
+        },
         "initialBalance": {
           "type": "number"
         },
@@ -554,6 +562,9 @@
         },
         "amount": {
           "type": "number"
+        },
+        "toAmount": {
+          "type": ["number", "null"]
         },
         "categoryId": {
           "type": ["string", "null"],

@@ -51,18 +51,22 @@ import {
   computeDailyExpenseSeries,
   computeMonthlyFinanceSummary,
   computeMonthlyTrendSeries,
+  convertMoney,
   filterFinanceTransactions,
   financeTransactionsToCsv,
   formatMoney,
   formatRussianMonthYear,
+  getAccountCurrency,
   getMonthKeyFromDate,
   getRecurringSuggestionsForMonth,
+  sanitizeFinanceCurrency,
   shiftMonthKey,
 } from '../utils/financeLogic';
 import {
   FinanceAccountModal,
   FinanceCategoryModal,
   FinanceGoalModal,
+  FinanceRatesModal,
 } from './FinanceManageModals';
 import { FinanceTransactionModal } from './FinanceTransactionModal';
 
@@ -75,11 +79,14 @@ interface FinanceViewProps {
   transactions: FinanceTransaction[];
   goals: FinanceGoal[];
   currency: FinanceCurrency;
+  rates: Record<FinanceCurrency, number>;
   onChangeCurrency: (currency: FinanceCurrency) => void;
+  onChangeRates: (rates: Record<FinanceCurrency, number>) => void;
   onSaveTransaction: (payload: {
     id?: string;
     kind: FinanceTransactionKind;
     amount: number;
+    toAmount?: number | null;
     categoryId: string | null;
     accountId: string;
     toAccountId: string | null;
@@ -100,6 +107,7 @@ interface FinanceViewProps {
     id?: string;
     title: string;
     type: FinanceAccountType;
+    currency: FinanceCurrency;
     initialBalance: number;
     color: LabelColor;
   }) => void;
@@ -155,7 +163,9 @@ export function FinanceView({
   transactions,
   goals,
   currency,
+  rates,
   onChangeCurrency,
+  onChangeRates,
   onSaveTransaction,
   onDeleteTransaction,
   onSaveCategory,
@@ -173,6 +183,7 @@ export function FinanceView({
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthKey);
   const [activeTab, setActiveTab] = useState<FinanceTab>('overview');
   const [chartMode, setChartMode] = useState<ChartMode>('trend');
+  const [ratesModalOpen, setRatesModalOpen] = useState(false);
 
   // Transaction filters
   const [search, setSearch] = useState('');
@@ -205,18 +216,34 @@ export function FinanceView({
   }>({ isOpen: false, goal: null });
 
   const accountBalances = useMemo(
-    () => computeAccountBalances(accounts, transactions),
-    [accounts, transactions]
+    () => computeAccountBalances(accounts, transactions, currency, rates),
+    [accounts, transactions, currency, rates]
   );
 
   const monthlySummary = useMemo(
-    () => computeMonthlyFinanceSummary(transactions, categories, selectedMonth),
-    [transactions, categories, selectedMonth]
+    () =>
+      computeMonthlyFinanceSummary(
+        transactions,
+        categories,
+        selectedMonth,
+        accounts,
+        currency,
+        rates
+      ),
+    [transactions, categories, selectedMonth, accounts, currency, rates]
   );
 
   const categoryProgress = useMemo(
-    () => computeCategoryBudgetProgress(categories, transactions, selectedMonth),
-    [categories, transactions, selectedMonth]
+    () =>
+      computeCategoryBudgetProgress(
+        categories,
+        transactions,
+        selectedMonth,
+        accounts,
+        currency,
+        rates
+      ),
+    [categories, transactions, selectedMonth, accounts, currency, rates]
   );
 
   const incomeCategoriesSummary = useMemo(() => {
@@ -228,19 +255,29 @@ export function FinanceView({
       .map((cat) => {
         const received = monthIncomes
           .filter((t) => t.categoryId === cat.id)
-          .reduce((sum, t) => sum + t.amount, 0);
+          .reduce(
+            (sum, t) =>
+              sum +
+              convertMoney(
+                t.amount,
+                getAccountCurrency(t.accountId, accounts, currency),
+                currency,
+                rates
+              ),
+            0
+          );
         return { category: cat, received };
       });
-  }, [categories, transactions, selectedMonth]);
+  }, [categories, transactions, selectedMonth, accounts, currency, rates]);
 
   const trendSeries = useMemo(
-    () => computeMonthlyTrendSeries(transactions, selectedMonth, 6),
-    [transactions, selectedMonth]
+    () => computeMonthlyTrendSeries(transactions, selectedMonth, 6, accounts, currency, rates),
+    [transactions, selectedMonth, accounts, currency, rates]
   );
 
   const dailySeries = useMemo(
-    () => computeDailyExpenseSeries(transactions, selectedMonth),
-    [transactions, selectedMonth]
+    () => computeDailyExpenseSeries(transactions, selectedMonth, accounts, currency, rates),
+    [transactions, selectedMonth, accounts, currency, rates]
   );
 
   const recurringSuggestions = useMemo(
@@ -285,7 +322,13 @@ export function FinanceView({
   );
 
   const handleExportCsv = () => {
-    const csv = financeTransactionsToCsv(filteredTransactions, categories, accounts, currency);
+    const csv = financeTransactionsToCsv(
+      filteredTransactions,
+      categories,
+      accounts,
+      currency,
+      rates
+    );
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -310,6 +353,7 @@ export function FinanceView({
     onSaveTransaction({
       kind: template.kind,
       amount: template.amount,
+      toAmount: template.toAmount ?? null,
       categoryId: template.categoryId,
       accountId: template.accountId,
       toAccountId: template.toAccountId,
@@ -395,20 +439,33 @@ export function FinanceView({
               ))}
             </nav>
 
-            {/* Currency Switcher */}
-            <select
-              data-testid="finance-currency-select"
-              aria-label="Валюта учёта"
-              value={currency}
-              onChange={(e) => onChangeCurrency(e.target.value as FinanceCurrency)}
-              className="h-9 md:h-10 px-2.5 text-xs font-semibold font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-600 cursor-pointer"
-            >
-              {FINANCE_CURRENCIES.map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.symbol} · {c.code}
-                </option>
-              ))}
-            </select>
+            {/* Base Currency Switcher + Exchange Rates */}
+            <div className="inline-flex items-center gap-1.5">
+              <select
+                data-testid="finance-currency-select"
+                aria-label="Базовая валюта отчётов"
+                title="Базовая валюта отчётов и лимитов"
+                value={currency}
+                onChange={(e) => onChangeCurrency(e.target.value as FinanceCurrency)}
+                className="h-9 md:h-10 px-2.5 text-xs font-semibold font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-600 cursor-pointer"
+              >
+                {FINANCE_CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.symbol} · {c.code}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                data-testid="finance-rates-button"
+                onClick={() => setRatesModalOpen(true)}
+                title="Настроить курсы валют"
+                className="h-9 md:h-10 px-3 text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-slate-700 dark:text-slate-200 whitespace-nowrap cursor-pointer"
+              >
+                Курсы
+              </button>
+            </div>
           </div>
         </header>
 
@@ -458,8 +515,17 @@ export function FinanceView({
                 >
                   {fmt(accountBalances.totalBalance)}
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
-                  На {accounts.length} {accounts.length === 1 ? 'счёте' : 'счетах'}
+                <div
+                  data-testid="kpi-total-balance-breakdown"
+                  className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums"
+                >
+                  {accountBalances.totalsByCurrency.length > 1 ||
+                  (accountBalances.totalsByCurrency.length === 1 &&
+                    accountBalances.totalsByCurrency[0].currency !== currency)
+                    ? accountBalances.totalsByCurrency
+                        .map((item) => formatMoney(item.amount, { currency: item.currency }))
+                        .join(' · ')
+                    : `На ${accounts.length} ${accounts.length === 1 ? 'счёте' : 'счетах'}`}
                 </div>
               </div>
 
@@ -552,6 +618,7 @@ export function FinanceView({
                       {recurringSuggestions.slice(0, 3).map((tpl) => {
                         const cat = tpl.categoryId ? categoryById.get(tpl.categoryId) : null;
                         const label = tpl.note || cat?.name || 'Регулярный платёж';
+                        const tplCur = getAccountCurrency(tpl.accountId, accounts, currency);
                         return (
                           <button
                             key={tpl.id}
@@ -562,7 +629,7 @@ export function FinanceView({
                             <Plus className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                             <span className="truncate max-w-[140px]">{label}</span>
                             <span className="font-mono tabular-nums font-semibold">
-                              {fmt(tpl.amount)}
+                              {formatMoney(tpl.amount, { currency: tplCur })}
                             </span>
                           </button>
                         );
@@ -995,6 +1062,9 @@ export function FinanceView({
                         const cat = tx.categoryId ? categoryById.get(tx.categoryId) : null;
                         const acc = accountById.get(tx.accountId);
                         const toAcc = tx.toAccountId ? accountById.get(tx.toAccountId) : null;
+                        const txCur = acc ? sanitizeFinanceCurrency(acc.currency) : currency;
+                        const toAccCur = toAcc ? sanitizeFinanceCurrency(toAcc.currency) : txCur;
+                        const isCrossTransfer = tx.kind === 'transfer' && txCur !== toAccCur;
 
                         const titleText =
                           tx.kind === 'transfer'
@@ -1010,10 +1080,25 @@ export function FinanceView({
 
                         const formattedAmount =
                           tx.kind === 'income'
-                            ? fmt(tx.amount, { signed: true })
+                            ? formatMoney(tx.amount, { signed: true, currency: txCur })
                             : tx.kind === 'expense'
-                            ? fmt(-tx.amount)
-                            : fmt(tx.amount);
+                            ? formatMoney(-tx.amount, { currency: txCur })
+                            : isCrossTransfer
+                            ? `${formatMoney(-tx.amount, { currency: txCur })} → +${formatMoney(
+                                tx.toAmount ?? tx.amount,
+                                { currency: toAccCur }
+                              )}`
+                            : formatMoney(tx.amount, { currency: txCur });
+
+                        const showBaseEq = tx.kind !== 'transfer' && txCur !== currency;
+                        const baseEqAmount = showBaseEq
+                          ? convertMoney(
+                              tx.kind === 'expense' ? -tx.amount : tx.amount,
+                              txCur,
+                              currency,
+                              rates
+                            )
+                          : null;
 
                         const parsedDate = parseFlexibleDate(tx.date);
 
@@ -1062,7 +1147,9 @@ export function FinanceView({
                                   {tx.kind !== 'transfer' && acc && (
                                     <>
                                       <span aria-hidden="true">·</span>
-                                      <span>{acc.title}</span>
+                                      <span>
+                                        {acc.title} ({txCur})
+                                      </span>
                                     </>
                                   )}
                                   {tx.isRecurring && (
@@ -1078,11 +1165,18 @@ export function FinanceView({
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0">
-                              <span
-                                className={`text-xs md:text-sm font-bold font-mono tabular-nums text-right ${amountCls}`}
-                              >
-                                {formattedAmount}
-                              </span>
+                              <div className="text-right">
+                                <div
+                                  className={`text-xs md:text-sm font-bold font-mono tabular-nums ${amountCls}`}
+                                >
+                                  {formattedAmount}
+                                </div>
+                                {baseEqAmount !== null && (
+                                  <div className="text-[10px] font-mono tabular-nums text-slate-400 dark:text-slate-500">
+                                    ≈ {fmt(baseEqAmount, { signed: tx.kind === 'income' })}
+                                  </div>
+                                )}
+                              </div>
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1373,7 +1467,9 @@ export function FinanceView({
 
                   <div className="space-y-2.5">
                     {accounts.map((acc) => {
+                      const accCur = sanitizeFinanceCurrency(acc.currency);
                       const currentBalance = accountBalances.balancesById.get(acc.id) ?? acc.initialBalance;
+                      const convertedBalance = accountBalances.convertedBalancesById.get(acc.id) ?? currentBalance;
                       return (
                         <div
                           key={acc.id}
@@ -1394,24 +1490,35 @@ export function FinanceView({
                                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
                                   {acc.title}
                                 </h3>
+                                <span className="text-[11px] font-mono font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+                                  {accCur}
+                                </span>
                               </div>
                               <p className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
                                 {ACCOUNT_TYPE_LABELS[acc.type]} · Нач. остаток:{' '}
-                                {fmt(acc.initialBalance)}
+                                {formatMoney(acc.initialBalance, { currency: accCur })}
                               </p>
                             </div>
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0">
-                            <span
-                              className={`text-sm md:text-base font-bold font-mono tabular-nums ${
-                                currentBalance < 0
-                                  ? 'text-rose-600 dark:text-rose-400'
-                                  : 'text-slate-900 dark:text-slate-100'
-                              }`}
-                            >
-                              {fmt(currentBalance)}
-                            </span>
+                            <div className="text-right">
+                              <div
+                                data-testid={`account-balance-${acc.id}`}
+                                className={`text-sm md:text-base font-bold font-mono tabular-nums ${
+                                  currentBalance < 0
+                                    ? 'text-rose-600 dark:text-rose-400'
+                                    : 'text-slate-900 dark:text-slate-100'
+                                }`}
+                              >
+                                {formatMoney(currentBalance, { currency: accCur })}
+                              </div>
+                              {accCur !== currency && (
+                                <div className="text-[11px] font-mono tabular-nums text-slate-400 dark:text-slate-500">
+                                  ≈ {fmt(convertedBalance)}
+                                </div>
+                              )}
+                            </div>
                             <button
                               type="button"
                               onClick={() => setAccModal({ isOpen: true, account: acc })}
@@ -1570,6 +1677,7 @@ export function FinanceView({
         isOpen={txModal.isOpen}
         transaction={txModal.transaction}
         currency={currency}
+        rates={rates}
         defaultKind={txModal.defaultKind}
         defaultMonthKey={selectedMonth}
         accounts={accounts}
@@ -1629,6 +1737,17 @@ export function FinanceView({
         onDelete={(goalId) => {
           onDeleteGoal(goalId);
           setGoalModal({ isOpen: false, goal: null });
+        }}
+      />
+
+      <FinanceRatesModal
+        isOpen={ratesModalOpen}
+        rates={rates}
+        baseCurrency={currency}
+        onClose={() => setRatesModalOpen(false)}
+        onSave={(nextRates) => {
+          onChangeRates(nextRates);
+          setRatesModalOpen(false);
         }}
       />
     </div>

@@ -35,6 +35,9 @@ test('firestore.rules includes all Eight Pillars guards', () => {
   assert.match(rulesContent, /match \/financeGoals\/\{goalId\}/);
   assert.match(rulesContent, /function isValidFinanceCurrency\(/);
   assert.match(rulesContent, /affectedKeys\(\)\.hasOnly\(\['financeCurrency', 'updatedAt'\]\)/);
+  assert.match(rulesContent, /affectedKeys\(\)\.hasOnly\(\['financeRates', 'updatedAt'\]\)/);
+  assert.match(rulesContent, /isValidFinanceCurrency\(data\.currency\)/);
+  assert.match(rulesContent, /'toAmount' in data/);
 
   // Pillar 5 & 8: Bounded arrays + non-blanket list rules
   assert.match(rulesContent, /allow list: if false;/);

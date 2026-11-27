@@ -4,16 +4,25 @@ import type {
   FinanceAccount,
   FinanceCategory,
   FinanceCurrency,
+  FinanceExchangeRates,
   FinanceTransaction,
   FinanceTransactionKind,
 } from '../types/planner';
 import { toLocalDateKey } from '../utils/dateUtils';
-import { DEFAULT_FINANCE_CURRENCY, getCurrencyMeta } from '../utils/financeLogic';
+import {
+  DEFAULT_FINANCE_CURRENCY,
+  DEFAULT_FINANCE_RATES,
+  convertMoney,
+  formatMoney,
+  getCurrencyMeta,
+  sanitizeFinanceCurrency,
+} from '../utils/financeLogic';
 
 interface FinanceTransactionModalProps {
   isOpen: boolean;
   transaction: FinanceTransaction | null;
   currency?: FinanceCurrency;
+  rates?: FinanceExchangeRates;
   defaultKind?: FinanceTransactionKind;
   defaultMonthKey?: string;
   accounts: FinanceAccount[];
@@ -23,6 +32,7 @@ interface FinanceTransactionModalProps {
     id?: string;
     kind: FinanceTransactionKind;
     amount: number;
+    toAmount?: number | null;
     categoryId: string | null;
     accountId: string;
     toAccountId: string | null;
@@ -37,6 +47,7 @@ export function FinanceTransactionModal({
   isOpen,
   transaction,
   currency = DEFAULT_FINANCE_CURRENCY,
+  rates = DEFAULT_FINANCE_RATES,
   defaultKind = 'expense',
   defaultMonthKey,
   accounts,
@@ -45,9 +56,10 @@ export function FinanceTransactionModal({
   onSave,
   onDelete,
 }: FinanceTransactionModalProps) {
-  const currencySymbol = getCurrencyMeta(currency).symbol;
   const [kind, setKind] = useState<FinanceTransactionKind>(defaultKind);
   const [amountStr, setAmountStr] = useState('');
+  const [toAmountStr, setToAmountStr] = useState('');
+  const [toAmountEdited, setToAmountEdited] = useState(false);
   const [categoryId, setCategoryId] = useState<string>('');
   const [accountId, setAccountId] = useState<string>('');
   const [toAccountId, setToAccountId] = useState<string>('');
@@ -62,13 +74,21 @@ export function FinanceTransactionModal({
     if (transaction) {
       setKind(transaction.kind);
       setAmountStr(String(transaction.amount));
-      setCategoryId(transaction.categoryId ?? '');
-      setAccountId(transaction.accountId || accounts[0]?.id || '');
-      setToAccountId(
+      const initialAccId = transaction.accountId || accounts[0]?.id || '';
+      const initialToId =
         transaction.toAccountId ||
-          accounts.find((a) => a.id !== (transaction.accountId || accounts[0]?.id))?.id ||
-          ''
-      );
+        accounts.find((a) => a.id !== initialAccId)?.id ||
+        '';
+      setAccountId(initialAccId);
+      setToAccountId(initialToId);
+      if (transaction.kind === 'transfer' && typeof transaction.toAmount === 'number' && transaction.toAmount > 0) {
+        setToAmountStr(String(transaction.toAmount));
+        setToAmountEdited(true);
+      } else {
+        setToAmountStr('');
+        setToAmountEdited(false);
+      }
+      setCategoryId(transaction.categoryId ?? '');
       setDate(transaction.date);
       setNote(transaction.note);
       setIsRecurring(transaction.isRecurring);
@@ -87,6 +107,8 @@ export function FinanceTransactionModal({
 
       setKind(nextKind);
       setAmountStr('');
+      setToAmountStr('');
+      setToAmountEdited(false);
       setCategoryId(matchingCats[0]?.id ?? '');
       setAccountId(firstAccount);
       setToAccountId(secondAccount);
@@ -96,11 +118,50 @@ export function FinanceTransactionModal({
     }
   }, [isOpen, transaction, defaultKind, defaultMonthKey, accounts, categories]);
 
+  const sourceAccount = accounts.find((a) => a.id === accountId) ?? accounts[0];
+  const targetAccount = accounts.find((a) => a.id === toAccountId);
+  const sourceCurrency = sourceAccount
+    ? sanitizeFinanceCurrency(sourceAccount.currency)
+    : currency;
+  const targetCurrency = targetAccount
+    ? sanitizeFinanceCurrency(targetAccount.currency)
+    : sourceCurrency;
+  const sourceSymbol = getCurrencyMeta(sourceCurrency).symbol;
+  const targetSymbol = getCurrencyMeta(targetCurrency).symbol;
+  const isCrossCurrencyTransfer =
+    kind === 'transfer' && Boolean(targetAccount) && sourceCurrency !== targetCurrency;
+
+  // Keep target amount auto-synced from exchange rates until manually overridden
+  useEffect(() => {
+    if (!isOpen || !isCrossCurrencyTransfer || toAmountEdited) return;
+    const parsed = Number(amountStr.replace(/\s+/g, '').replace(',', '.'));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      setToAmountStr(String(convertMoney(parsed, sourceCurrency, targetCurrency, rates)));
+    } else {
+      setToAmountStr('');
+    }
+  }, [
+    isOpen,
+    isCrossCurrencyTransfer,
+    toAmountEdited,
+    amountStr,
+    sourceCurrency,
+    targetCurrency,
+    rates,
+  ]);
+
   if (!isOpen) return null;
 
   const filteredCategories = categories.filter(
     (c) => c.kind === (kind === 'income' ? 'income' : 'expense')
   );
+
+  const parsedPreviewAmount = Number(amountStr.replace(/\s+/g, '').replace(',', '.'));
+  const showBasePreview =
+    kind !== 'transfer' &&
+    sourceCurrency !== currency &&
+    Number.isFinite(parsedPreviewAmount) &&
+    parsedPreviewAmount > 0;
 
   const handleChangeKind = (nextKind: FinanceTransactionKind) => {
     setKind(nextKind);
@@ -113,6 +174,7 @@ export function FinanceTransactionModal({
     } else if (!toAccountId || toAccountId === accountId) {
       const alt = accounts.find((a) => a.id !== accountId)?.id ?? '';
       setToAccountId(alt);
+      setToAmountEdited(false);
     }
   };
 
@@ -124,17 +186,26 @@ export function FinanceTransactionModal({
       return;
     }
     if (parsedAmount > 1_000_000_000) {
-      setError(`Сумма не может превышать 1 000 000 000 ${currencySymbol}.`);
+      setError(`Сумма не может превышать 1 000 000 000 ${sourceSymbol}.`);
       return;
     }
     if (!accountId) {
       setError('Сначала создайте хотя бы один счёт.');
       return;
     }
+    let parsedToAmount: number | null = null;
     if (kind === 'transfer') {
       if (!toAccountId || toAccountId === accountId) {
         setError('Выберите другой счёт для зачисления перевода.');
         return;
+      }
+      if (isCrossCurrencyTransfer) {
+        const candidateTo = Number(toAmountStr.replace(/\s+/g, '').replace(',', '.'));
+        if (!Number.isFinite(candidateTo) || candidateTo <= 0 || candidateTo > 1_000_000_000) {
+          setError(`Укажите корректную сумму зачисления (${targetSymbol}).`);
+          return;
+        }
+        parsedToAmount = candidateTo;
       }
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -146,6 +217,7 @@ export function FinanceTransactionModal({
       id: transaction?.id,
       kind,
       amount: parsedAmount,
+      toAmount: parsedToAmount,
       categoryId: kind === 'transfer' ? null : categoryId || null,
       accountId,
       toAccountId: kind === 'transfer' ? toAccountId : null,
@@ -211,27 +283,62 @@ export function FinanceTransactionModal({
           </div>
 
           {/* Amount */}
-          <div>
-            <label
-              htmlFor="tx-amount-input"
-              className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
-            >
-              Сумма ({currencySymbol})
-            </label>
-            <input
-              id="tx-amount-input"
-              data-testid="tx-amount-input"
-              type="text"
-              inputMode="decimal"
-              autoFocus
-              value={amountStr}
-              onChange={(e) => {
-                setAmountStr(e.target.value);
-                setError(null);
-              }}
-              placeholder="0"
-              className="w-full px-3.5 py-2.5 text-lg font-bold font-mono tabular-nums bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-800"
-            />
+          <div className={isCrossCurrencyTransfer ? 'grid grid-cols-1 sm:grid-cols-2 gap-3' : ''}>
+            <div>
+              <label
+                htmlFor="tx-amount-input"
+                className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
+              >
+                {isCrossCurrencyTransfer ? `Списание (${sourceSymbol})` : `Сумма (${sourceSymbol})`}
+              </label>
+              <input
+                id="tx-amount-input"
+                data-testid="tx-amount-input"
+                type="text"
+                inputMode="decimal"
+                autoFocus
+                value={amountStr}
+                onChange={(e) => {
+                  setAmountStr(e.target.value);
+                  setError(null);
+                }}
+                placeholder="0"
+                className="w-full px-3.5 py-2.5 text-lg font-bold font-mono tabular-nums bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-800"
+              />
+              {showBasePreview && (
+                <p
+                  data-testid="tx-base-equivalent"
+                  className="mt-1 text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400"
+                >
+                  ≈ {formatMoney(convertMoney(parsedPreviewAmount, sourceCurrency, currency, rates), { currency })}
+                </p>
+              )}
+            </div>
+
+            {isCrossCurrencyTransfer && (
+              <div>
+                <label
+                  htmlFor="tx-to-amount-input"
+                  className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
+                >
+                  Зачисление ({targetSymbol})
+                </label>
+                <input
+                  id="tx-to-amount-input"
+                  data-testid="tx-to-amount-input"
+                  type="text"
+                  inputMode="decimal"
+                  value={toAmountStr}
+                  onChange={(e) => {
+                    setToAmountStr(e.target.value);
+                    setToAmountEdited(true);
+                    setError(null);
+                  }}
+                  placeholder="0"
+                  className="w-full px-3.5 py-2.5 text-lg font-bold font-mono tabular-nums bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-800"
+                />
+              </div>
+            )}
           </div>
 
           {/* Account(s) */}
@@ -241,20 +348,31 @@ export function FinanceTransactionModal({
                 htmlFor="tx-account-select"
                 className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
               >
-                {kind === 'income' ? 'На счёт' : kind === 'transfer' ? 'Со счёта' : 'Со счёта'}
+                {kind === 'income' ? 'На счёт' : 'Со счёта'}
               </label>
               <select
                 id="tx-account-select"
                 data-testid="tx-account-select"
                 value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setAccountId(nextId);
+                  setToAmountEdited(false);
+                  if (kind === 'transfer' && nextId === toAccountId) {
+                    const alt = accounts.find((a) => a.id !== nextId)?.id ?? '';
+                    setToAccountId(alt);
+                  }
+                }}
                 className="w-full px-3 py-2.5 text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
               >
-                {accounts.map((acc) => (
-                  <option key={acc.id} value={acc.id}>
-                    {acc.title}
-                  </option>
-                ))}
+                {accounts.map((acc) => {
+                  const accSym = getCurrencyMeta(sanitizeFinanceCurrency(acc.currency)).symbol;
+                  return (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.title} ({accSym})
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -270,16 +388,22 @@ export function FinanceTransactionModal({
                   id="tx-to-account-select"
                   data-testid="tx-to-account-select"
                   value={toAccountId}
-                  onChange={(e) => setToAccountId(e.target.value)}
+                  onChange={(e) => {
+                    setToAccountId(e.target.value);
+                    setToAmountEdited(false);
+                  }}
                   className="w-full px-3 py-2.5 text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
                 >
                   {accounts
                     .filter((a) => a.id !== accountId)
-                    .map((acc) => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.title}
-                      </option>
-                    ))}
+                    .map((acc) => {
+                      const accSym = getCurrencyMeta(sanitizeFinanceCurrency(acc.currency)).symbol;
+                      return (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.title} ({accSym})
+                        </option>
+                      );
+                    })}
                 </select>
               </div>
             )}

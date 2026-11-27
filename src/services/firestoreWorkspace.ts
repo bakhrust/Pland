@@ -33,6 +33,7 @@ import type {
   FinanceCategory,
   FinanceCategoryKind,
   FinanceCurrency,
+  FinanceExchangeRates,
   FinanceGoal,
   FinanceTransaction,
   FinanceTransactionKind,
@@ -48,13 +49,16 @@ import type {
 import { toLocalDateKey } from '../utils/dateUtils';
 import {
   DEFAULT_FINANCE_CURRENCY,
+  DEFAULT_FINANCE_RATES,
   FINANCE_ACCOUNT_TYPES,
   FINANCE_TRANSACTION_KINDS,
   roundMoney,
   sanitizeFinanceCurrency,
+  sanitizeFinanceRates,
 } from '../utils/financeLogic';
 import { NOTE_BLOCK_TYPES } from '../utils/notesLogic';
 import { clampText, isValidEntityId } from '../utils/urlSafety';
+import { isTransientFirestoreError } from '../utils/firestoreErrors';
 import { auth, db } from './firebaseClient';
 
 export enum OperationType {
@@ -309,6 +313,7 @@ function buildFinanceAccountMutableFields(account: FinanceAccount, order: number
   return {
     title: clampText(account.title.trim() || 'Счёт', 80),
     type: VALID_FINANCE_ACCOUNT_TYPES.has(account.type) ? account.type : ('card' as const),
+    currency: sanitizeFinanceCurrency(account.currency),
     initialBalance: Math.max(-1_000_000_000, Math.min(1_000_000_000, safeBalance)),
     color: sanitizeColor(account.color, 'blue'),
     order: Math.max(0, Math.min(1000, Math.round(order))),
@@ -361,9 +366,20 @@ function buildFinanceTransactionMutableFields(tx: FinanceTransaction) {
     0.01,
     Math.min(1_000_000_000, roundMoney(Math.abs(Number(tx.amount)) || 0.01))
   );
+  const rawToAmount =
+    kind === 'transfer' &&
+    typeof tx.toAmount === 'number' &&
+    Number.isFinite(tx.toAmount) &&
+    tx.toAmount > 0
+      ? roundMoney(tx.toAmount)
+      : null;
+  const toAmount =
+    rawToAmount !== null ? Math.max(0.01, Math.min(1_000_000_000, rawToAmount)) : null;
+
   return {
     kind,
     amount,
+    toAmount,
     categoryId:
       kind === 'transfer'
         ? null
@@ -481,6 +497,21 @@ function readAndClearLegacyLocalData(): {
   return { workspace, visibleCalendarIds, targetCalendarId };
 }
 
+async function withTransientRetry<T>(operation: () => Promise<T>, maxRetries = 2): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (err) {
+      if (attempt >= maxRetries || !isTransientFirestoreError(err)) {
+        throw err;
+      }
+      attempt += 1;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 600));
+    }
+  }
+}
+
 export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   workspace: WorkspaceData;
   habits: HabitItem[];
@@ -491,6 +522,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   financeTransactions: FinanceTransaction[];
   financeGoals: FinanceGoal[];
   financeCurrency: FinanceCurrency;
+  financeRates: Record<FinanceCurrency, number>;
   visibleCalendarIds: string[];
   targetCalendarId: string;
   theme: 'light' | 'dark';
@@ -501,15 +533,15 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
 
   let userSnap;
   try {
-    userSnap = await getDoc(doc(db, 'users', uid));
+    userSnap = await withTransientRetry(() => getDoc(doc(db, 'users', uid)));
   } catch (err) {
     handleFirestoreError(err, OperationType.GET, userPath);
   }
 
   let boardSnaps;
   try {
-    boardSnaps = await getDocs(
-      query(collection(db, 'users', uid, 'boards'), where('ownerUid', '==', uid))
+    boardSnaps = await withTransientRetry(() =>
+      getDocs(query(collection(db, 'users', uid, 'boards'), where('ownerUid', '==', uid)))
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, boardsPath);
@@ -537,6 +569,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         notesSeeded: true,
         financeSeeded: true,
         financeCurrency: DEFAULT_FINANCE_CURRENCY,
+        financeRates: DEFAULT_FINANCE_RATES,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -683,6 +716,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
       financeTransactions: seedFinanceTransactions,
       financeGoals: seedFinanceGoals,
       financeCurrency: DEFAULT_FINANCE_CURRENCY,
+      financeRates: { ...DEFAULT_FINANCE_RATES },
       visibleCalendarIds: legacy.visibleCalendarIds,
       targetCalendarId: legacy.targetCalendarId || 'primary',
       theme: 'light',
@@ -912,6 +946,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         type: VALID_FINANCE_ACCOUNT_TYPES.has(d.type as FinanceAccountType)
           ? (d.type as FinanceAccountType)
           : 'card',
+        currency: sanitizeFinanceCurrency(d.currency),
         initialBalance: Number(d.initialBalance ?? 0),
         color: sanitizeColor(d.color, 'blue'),
         order: Number(d.order ?? 0),
@@ -943,6 +978,10 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
           ? (d.kind as FinanceTransactionKind)
           : 'expense',
         amount: Math.max(0.01, Number(d.amount ?? 0.01)),
+        toAmount:
+          typeof d.toAmount === 'number' && Number.isFinite(d.toAmount) && d.toAmount > 0
+            ? Number(d.toAmount)
+            : null,
         categoryId: typeof d.categoryId === 'string' && d.categoryId ? d.categoryId : null,
         accountId: String(d.accountId ?? ''),
         toAccountId: typeof d.toAccountId === 'string' && d.toAccountId ? d.toAccountId : null,
@@ -1038,6 +1077,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
     : boards[0].id;
   const theme: 'light' | 'dark' = userData.theme === 'dark' ? 'dark' : 'light';
   const financeCurrency = sanitizeFinanceCurrency(userData.financeCurrency);
+  const financeRates = sanitizeFinanceRates(userData.financeRates);
 
   return {
     workspace: {
@@ -1052,6 +1092,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
     financeTransactions,
     financeGoals,
     financeCurrency,
+    financeRates,
     visibleCalendarIds: Array.isArray(userData.visibleCalendarIds)
       ? (userData.visibleCalendarIds as string[])
       : [],
@@ -1071,6 +1112,7 @@ export async function saveUserPrefsToFirestore(
     targetCalendarId?: string;
     theme?: 'light' | 'dark';
     financeCurrency?: FinanceCurrency;
+    financeRates?: FinanceExchangeRates;
   }
 ): Promise<void> {
   const userPath = `users/${uid}`;
@@ -1094,6 +1136,9 @@ export async function saveUserPrefsToFirestore(
   }
   if (prefs.financeCurrency !== undefined) {
     payload.financeCurrency = sanitizeFinanceCurrency(prefs.financeCurrency);
+  }
+  if (prefs.financeRates !== undefined) {
+    payload.financeRates = sanitizeFinanceRates(prefs.financeRates);
   }
   try {
     await updateDoc(doc(db, 'users', uid), payload);

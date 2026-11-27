@@ -8,6 +8,7 @@ import {
   parseFlexibleDate,
   toLocalDateKey,
 } from './dateUtils';
+import { isTransientFirestoreError } from './firestoreErrors';
 import {
   addBoardToWorkspace,
   adjustCardDurationMinutes,
@@ -60,6 +61,7 @@ import {
   computeDailyExpenseSeries,
   computeMonthlyFinanceSummary,
   computeMonthlyTrendSeries,
+  convertMoney,
   createFinanceAccount,
   createFinanceCategory,
   createFinanceGoal,
@@ -69,6 +71,7 @@ import {
   formatMoney,
   getRecurringSuggestionsForMonth,
   sanitizeFinanceCurrency,
+  sanitizeFinanceRates,
 } from './financeLogic';
 
 const makeCard = (overrides: Partial<CardItem> = {}): CardItem => ({
@@ -717,7 +720,7 @@ test('financeLogic computes trends, recurring suggestions, filters, and safe CSV
 
   const csv = financeTransactionsToCsv(filtered, [cat], [acc], 'USD');
   assert.ok(csv.startsWith('\uFEFFДата;Тип;Категория'));
-  assert.ok(csv.includes('Сумма ($)'));
+  assert.ok(csv.includes('Сумма;Валюта;Эквивалент ($)'));
   assert.ok(csv.includes("'=SUM(A1) проверка"));
 
   assert.equal(sanitizeFinanceCurrency('EUR'), 'EUR');
@@ -725,4 +728,158 @@ test('financeLogic computes trends, recurring suggestions, filters, and safe CSV
   assert.equal(formatMoney(1250, { currency: 'USD', signed: true }), '+1\u00a0250 $');
   assert.equal(formatMoney(-40.5, { currency: 'EUR' }), '−40,50 €');
 });
+
+test('financeLogic supports per-account currencies, RUB base reporting, custom rates, and cross-currency transfers', () => {
+  const rates = sanitizeFinanceRates({ USD: 100, EUR: 110 });
+  assert.equal(convertMoney(50, 'USD', 'RUB', rates), 5000);
+  assert.equal(convertMoney(11000, 'RUB', 'EUR', rates), 100);
+
+  const rubCard = createFinanceAccount({
+    id: 'acc-rub',
+    title: 'Рублевая карта',
+    type: 'card',
+    currency: 'RUB',
+    initialBalance: 100000,
+    color: 'blue',
+    order: 0,
+  });
+  const usdCash = createFinanceAccount({
+    id: 'acc-usd-cash',
+    title: 'Наличные USD',
+    type: 'cash',
+    currency: 'USD',
+    initialBalance: 500,
+    color: 'emerald',
+    order: 1,
+  });
+  const usdBank = createFinanceAccount({
+    id: 'acc-usd-bank',
+    title: 'Валютный счёт',
+    type: 'savings',
+    currency: 'USD',
+    initialBalance: 1000,
+    color: 'violet',
+    order: 2,
+  });
+
+  const catFood = createFinanceCategory({
+    id: 'c-food',
+    name: 'Еда',
+    kind: 'expense',
+    monthlyLimit: 20000,
+    color: 'amber',
+    order: 0,
+  });
+
+  const txs = [
+    createFinanceTransaction({
+      id: 'tx-usd-exp',
+      kind: 'expense',
+      amount: 50, // 50 USD -> 5 000 RUB
+      categoryId: catFood.id,
+      accountId: usdCash.id,
+      date: '2026-11-12',
+      note: 'Ужин в поездке',
+    }),
+    createFinanceTransaction({
+      id: 'tx-rub-exp',
+      kind: 'expense',
+      amount: 3000, // 3 000 RUB
+      categoryId: catFood.id,
+      accountId: rubCard.id,
+      date: '2026-11-14',
+      note: 'Супермаркет',
+    }),
+    createFinanceTransaction({
+      id: 'tx-fx-transfer',
+      kind: 'transfer',
+      amount: 10200, // debits 10 200 RUB
+      toAmount: 100, // credits 100 USD with bank spread
+      categoryId: null,
+      accountId: rubCard.id,
+      toAccountId: usdBank.id,
+      date: '2026-11-15',
+      note: 'Покупка долларов',
+    }),
+  ];
+
+  const { balancesById, convertedBalancesById, totalsByCurrency, totalBalance } =
+    computeAccountBalances([rubCard, usdCash, usdBank], txs, 'RUB', rates);
+
+  assert.equal(balancesById.get(rubCard.id), 86800); // 100k - 3k - 10.2k
+  assert.equal(balancesById.get(usdCash.id), 450); // 500 - 50
+  assert.equal(balancesById.get(usdBank.id), 1100); // 1000 + 100
+
+  assert.equal(convertedBalancesById.get(usdCash.id), 45000);
+  assert.equal(convertedBalancesById.get(usdBank.id), 110000);
+  assert.equal(totalBalance, 241800); // 86800 + 45000 + 110000
+
+  const rubTotal = totalsByCurrency.find((t) => t.currency === 'RUB');
+  const usdTotal = totalsByCurrency.find((t) => t.currency === 'USD');
+  assert.deepEqual(rubTotal, { currency: 'RUB', amount: 86800, count: 1 });
+  assert.deepEqual(usdTotal, { currency: 'USD', amount: 1550, count: 2 });
+
+  // Monthly reporting converts USD expense (50 * 100 = 5000 RUB) + RUB expense (3000 RUB) = 8000 RUB
+  const summary = computeMonthlyFinanceSummary(
+    txs,
+    [catFood],
+    '2026-11',
+    [rubCard, usdCash, usdBank],
+    'RUB',
+    rates
+  );
+  assert.equal(summary.totalExpense, 8000);
+  assert.equal(summary.budgetRemaining, 12000);
+
+  const csv = financeTransactionsToCsv(
+    txs,
+    [catFood],
+    [rubCard, usdCash, usdBank],
+    'RUB',
+    rates
+  );
+  assert.ok(csv.includes("'-50;USD;'-5000"));
+});
+
+test('isTransientFirestoreError distinguishes connectivity errors from permission denials', () => {
+  assert.equal(
+    isTransientFirestoreError({
+      code: 'unavailable',
+      message: 'Could not reach Cloud Firestore backend.',
+    }),
+    true
+  );
+  assert.equal(
+    isTransientFirestoreError(
+      new Error(
+        JSON.stringify({
+          error: 'Failed to get document because the client is offline.',
+          operationType: 'get',
+          path: 'users/123',
+        })
+      )
+    ),
+    true
+  );
+  assert.equal(
+    isTransientFirestoreError(
+      new Error(
+        JSON.stringify({
+          error: 'Missing or insufficient permissions.',
+          operationType: 'get',
+          path: 'users/123',
+        })
+      )
+    ),
+    false
+  );
+  assert.equal(
+    isTransientFirestoreError({
+      code: 'permission-denied',
+      message: 'PERMISSION_DENIED',
+    }),
+    false
+  );
+});
+
 

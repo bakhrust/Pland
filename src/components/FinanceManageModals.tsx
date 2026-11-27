@@ -1,4 +1,4 @@
-import { Trash2, X } from 'lucide-react';
+import { RotateCcw, Trash2, X } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import type {
   FinanceAccount,
@@ -9,7 +9,15 @@ import type {
   FinanceGoal,
   LabelColor,
 } from '../types/planner';
-import { DEFAULT_FINANCE_CURRENCY, getCurrencyMeta } from '../utils/financeLogic';
+import {
+  DEFAULT_FINANCE_CURRENCY,
+  DEFAULT_FINANCE_RATES,
+  FINANCE_CURRENCIES,
+  convertMoney,
+  getCurrencyMeta,
+  sanitizeFinanceCurrency,
+  sanitizeFinanceRates,
+} from '../utils/financeLogic';
 
 const COLOR_OPTIONS: { id: LabelColor; label: string; dotCls: string }[] = [
   { id: 'blue', label: 'Синий', dotCls: 'bg-blue-600' },
@@ -263,6 +271,7 @@ interface FinanceAccountModalProps {
     id?: string;
     title: string;
     type: FinanceAccountType;
+    currency: FinanceCurrency;
     initialBalance: number;
     color: LabelColor;
   }) => void;
@@ -278,9 +287,9 @@ export function FinanceAccountModal({
   onSave,
   onDelete,
 }: FinanceAccountModalProps) {
-  const currencySymbol = getCurrencyMeta(currency).symbol;
   const [title, setTitle] = useState('');
   const [type, setType] = useState<FinanceAccountType>('card');
+  const [accCurrency, setAccCurrency] = useState<FinanceCurrency>(currency);
   const [initialBalanceStr, setInitialBalanceStr] = useState('0');
   const [color, setColor] = useState<LabelColor>('blue');
   const [error, setError] = useState<string | null>(null);
@@ -291,17 +300,21 @@ export function FinanceAccountModal({
     if (account) {
       setTitle(account.title);
       setType(account.type);
+      setAccCurrency(sanitizeFinanceCurrency(account.currency));
       setInitialBalanceStr(String(account.initialBalance));
       setColor(account.color === 'slate' ? 'blue' : account.color);
     } else {
       setTitle('');
       setType('card');
+      setAccCurrency(sanitizeFinanceCurrency(currency));
       setInitialBalanceStr('0');
       setColor('blue');
     }
-  }, [isOpen, account]);
+  }, [isOpen, account, currency]);
 
   if (!isOpen) return null;
+
+  const accCurrencySymbol = getCurrencyMeta(accCurrency).symbol;
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -320,6 +333,7 @@ export function FinanceAccountModal({
       id: account?.id,
       title: cleanTitle,
       type,
+      currency: accCurrency,
       initialBalance: num,
       color,
     });
@@ -367,7 +381,7 @@ export function FinanceAccountModal({
                 setTitle(e.target.value);
                 setError(null);
               }}
-              placeholder="Например: Тинькофф или Наличные"
+              placeholder="Например: Наличные USD или Сбер"
               className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
             />
           </div>
@@ -391,22 +405,41 @@ export function FinanceAccountModal({
             </div>
 
             <div>
-              <label htmlFor="facc-balance" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Начальный остаток ({currencySymbol})
+              <label htmlFor="facc-currency" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Валюта счёта
               </label>
-              <input
-                id="facc-balance"
-                data-testid="facc-balance-input"
-                type="text"
-                inputMode="decimal"
-                value={initialBalanceStr}
-                onChange={(e) => {
-                  setInitialBalanceStr(e.target.value);
-                  setError(null);
-                }}
-                className="w-full px-3.5 py-2.5 text-xs font-mono tabular-nums bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
-              />
+              <select
+                id="facc-currency"
+                data-testid="facc-currency-select"
+                value={accCurrency}
+                onChange={(e) => setAccCurrency(e.target.value as FinanceCurrency)}
+                className="w-full px-3 py-2.5 text-xs font-mono font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
+              >
+                {FINANCE_CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.symbol} · {c.code} — {c.label}
+                  </option>
+                ))}
+              </select>
             </div>
+          </div>
+
+          <div>
+            <label htmlFor="facc-balance" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+              Начальный остаток ({accCurrencySymbol})
+            </label>
+            <input
+              id="facc-balance"
+              data-testid="facc-balance-input"
+              type="text"
+              inputMode="decimal"
+              value={initialBalanceStr}
+              onChange={(e) => {
+                setInitialBalanceStr(e.target.value);
+                setError(null);
+              }}
+              className="w-full px-3.5 py-2.5 text-xs font-mono tabular-nums bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
+            />
           </div>
 
           <div>
@@ -703,6 +736,191 @@ export function FinanceGoalModal({
               <button
                 type="submit"
                 data-testid="fgoal-save-button"
+                className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer"
+              >
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Exchange Rates Modal ----------------- */
+interface FinanceRatesModalProps {
+  isOpen: boolean;
+  rates: Record<FinanceCurrency, number>;
+  baseCurrency: FinanceCurrency;
+  onClose: () => void;
+  onSave: (rates: Record<FinanceCurrency, number>) => void;
+}
+
+export function FinanceRatesModal({
+  isOpen,
+  rates,
+  baseCurrency,
+  onClose,
+  onSave,
+}: FinanceRatesModalProps) {
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setError(null);
+    const next: Record<string, string> = {};
+    for (const meta of FINANCE_CURRENCIES) {
+      if (meta.code === 'RUB') continue;
+      next[meta.code] = String(rates[meta.code] ?? DEFAULT_FINANCE_RATES[meta.code]);
+    }
+    setDraft(next);
+  }, [isOpen, rates]);
+
+  if (!isOpen) return null;
+
+  const baseMeta = getCurrencyMeta(baseCurrency);
+
+  const handleReset = () => {
+    setError(null);
+    const next: Record<string, string> = {};
+    for (const meta of FINANCE_CURRENCIES) {
+      if (meta.code === 'RUB') continue;
+      next[meta.code] = String(DEFAULT_FINANCE_RATES[meta.code]);
+    }
+    setDraft(next);
+  };
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const numeric: Partial<Record<FinanceCurrency, number>> = { RUB: 1 };
+    for (const meta of FINANCE_CURRENCIES) {
+      if (meta.code === 'RUB') continue;
+      const val = Number((draft[meta.code] ?? '').replace(/\s+/g, '').replace(',', '.'));
+      if (!Number.isFinite(val) || val <= 0 || val > 1_000_000) {
+        setError(`Укажите корректный положительный курс для ${meta.code}.`);
+        return;
+      }
+      numeric[meta.code] = val;
+    }
+    onSave(sanitizeFinanceRates(numeric));
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="finance-rates-modal-title"
+      onClick={onClose}
+    >
+      <div
+        className="w-full sm:max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-t-2xl sm:rounded-2xl shadow-xl overflow-hidden max-h-[90dvh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+          <div>
+            <h2 id="finance-rates-modal-title" className="text-base font-bold text-slate-900 dark:text-slate-100">
+              Курсы валют
+            </h2>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Используются для пересчёта счетов и операций в {baseMeta.code} ({baseMeta.symbol})
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Закрыть"
+            className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {FINANCE_CURRENCIES.filter((m) => m.code !== 'RUB').map((meta) => {
+              const rawVal = Number((draft[meta.code] ?? '').replace(/\s+/g, '').replace(',', '.'));
+              const previewCross =
+                baseCurrency !== 'RUB' &&
+                baseCurrency !== meta.code &&
+                Number.isFinite(rawVal) &&
+                rawVal > 0
+                  ? convertMoney(1, meta.code, baseCurrency, {
+                      ...rates,
+                      [meta.code]: rawVal,
+                    })
+                  : null;
+
+              return (
+                <div
+                  key={meta.code}
+                  className="bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label
+                      htmlFor={`frate-${meta.code}`}
+                      className="text-xs font-semibold text-slate-800 dark:text-slate-200"
+                    >
+                      1 {meta.code} ({meta.symbol})
+                    </label>
+                    <span className="text-[11px] text-slate-400 truncate">{meta.label}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      id={`frate-${meta.code}`}
+                      data-testid={`frate-input-${meta.code}`}
+                      type="text"
+                      inputMode="decimal"
+                      value={draft[meta.code] ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setDraft((prev) => ({ ...prev, [meta.code]: val }));
+                        setError(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
+                    />
+                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400 shrink-0">
+                      ₽
+                    </span>
+                  </div>
+                  {previewCross !== null && (
+                    <p className="mt-1 text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                      ≈ {previewCross} {baseMeta.symbol}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {error && (
+            <p className="text-xs font-medium text-rose-600 dark:text-rose-400" role="alert">
+              {error}
+            </p>
+          )}
+
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={handleReset}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Сбросить</span>
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                data-testid="frates-save-button"
                 className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer"
               >
                 Сохранить

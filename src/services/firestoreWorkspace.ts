@@ -1,16 +1,18 @@
 import type { User } from 'firebase/auth';
 import {
   collection,
-  deleteDoc,
+  deleteDoc as rawDeleteDoc,
   doc,
-  getDoc,
-  getDocs,
+  getDoc as rawGetDoc,
+  getDocs as rawGetDocs,
+  limit,
   query,
   serverTimestamp,
-  setDoc,
-  updateDoc,
+  setDoc as rawSetDoc,
+  updateDoc as rawUpdateDoc,
   where,
   writeBatch,
+  type WriteBatch,
 } from 'firebase/firestore';
 import {
   createInitialFinanceAccounts,
@@ -59,7 +61,50 @@ import {
 import { NOTE_BLOCK_TYPES } from '../utils/notesLogic';
 import { clampText, isValidEntityId } from '../utils/urlSafety';
 import { isTransientFirestoreError } from '../utils/firestoreErrors';
+import { consumeCostBudget, isCostGuardError } from '../utils/costGuard';
 import { auth, db } from './firebaseClient';
+
+export const FIRESTORE_QUERY_LIMITS = {
+  boards: 50,
+  cards: 500,
+  habits: 100,
+  noteFolders: 200,
+  notes: 500,
+  financeAccounts: 50,
+  financeCategories: 100,
+  financeTransactions: 2000,
+  financeGoals: 100,
+} as const;
+
+const getDoc: typeof rawGetDoc = ((...args: Parameters<typeof rawGetDoc>) => {
+  consumeCostBudget('firestore:read');
+  return rawGetDoc(...args);
+}) as typeof rawGetDoc;
+
+const getDocs: typeof rawGetDocs = ((...args: Parameters<typeof rawGetDocs>) => {
+  consumeCostBudget('firestore:read');
+  return rawGetDocs(...args);
+}) as typeof rawGetDocs;
+
+const setDoc: typeof rawSetDoc = ((...args: Parameters<typeof rawSetDoc>) => {
+  consumeCostBudget('firestore:write');
+  return rawSetDoc(...args);
+}) as typeof rawSetDoc;
+
+const updateDoc: typeof rawUpdateDoc = ((...args: Parameters<typeof rawUpdateDoc>) => {
+  consumeCostBudget('firestore:write');
+  return rawUpdateDoc(...args);
+}) as typeof rawUpdateDoc;
+
+const deleteDoc: typeof rawDeleteDoc = ((...args: Parameters<typeof rawDeleteDoc>) => {
+  consumeCostBudget('firestore:write');
+  return rawDeleteDoc(...args);
+}) as typeof rawDeleteDoc;
+
+function commitGuardedBatch(batch: WriteBatch): Promise<void> {
+  consumeCostBudget('firestore:write');
+  return batch.commit();
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -92,6 +137,9 @@ export function handleFirestoreError(
   operationType: OperationType,
   path: string | null
 ): never {
+  if (isCostGuardError(error)) {
+    throw error;
+  }
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -503,7 +551,7 @@ async function withTransientRetry<T>(operation: () => Promise<T>, maxRetries = 2
     try {
       return await operation();
     } catch (err) {
-      if (attempt >= maxRetries || !isTransientFirestoreError(err)) {
+      if (isCostGuardError(err) || attempt >= maxRetries || !isTransientFirestoreError(err)) {
         throw err;
       }
       attempt += 1;
@@ -541,7 +589,13 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   let boardSnaps;
   try {
     boardSnaps = await withTransientRetry(() =>
-      getDocs(query(collection(db, 'users', uid, 'boards'), where('ownerUid', '==', uid)))
+      getDocs(
+        query(
+          collection(db, 'users', uid, 'boards'),
+          where('ownerUid', '==', uid),
+          limit(FIRESTORE_QUERY_LIMITS.boards)
+        )
+      )
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, boardsPath);
@@ -583,7 +637,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         });
       });
 
-      await setupBatch.commit();
+      await commitGuardedBatch(setupBatch);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, boardsPath);
     }
@@ -609,7 +663,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         });
       });
       if (hasCards) {
-        await cardBatch.commit();
+        await commitGuardedBatch(cardBatch);
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `${boardsPath}/*/cards`);
@@ -628,7 +682,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
           updatedAt: serverTimestamp(),
         });
       });
-      await habitBatch.commit();
+      await commitGuardedBatch(habitBatch);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, habitsPath);
     }
@@ -656,7 +710,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
           updatedAt: serverTimestamp(),
         });
       });
-      await notesBatch.commit();
+      await commitGuardedBatch(notesBatch);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `${foldersPath}|${notesPath}`);
     }
@@ -701,7 +755,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
           updatedAt: serverTimestamp(),
         });
       });
-      await financeBatch.commit();
+      await commitGuardedBatch(financeBatch);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, financePath);
     }
@@ -738,7 +792,8 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
           query(
             collection(db, 'users', uid, 'boards', boardId, 'cards'),
             where('ownerUid', '==', uid),
-            where('boardId', '==', boardId)
+            where('boardId', '==', boardId),
+            limit(FIRESTORE_QUERY_LIMITS.cards)
           )
         );
       } catch (err) {
@@ -786,7 +841,11 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   let habitSnaps;
   try {
     habitSnaps = await getDocs(
-      query(collection(db, 'users', uid, 'habits'), where('ownerUid', '==', uid))
+      query(
+        collection(db, 'users', uid, 'habits'),
+        where('ownerUid', '==', uid),
+        limit(FIRESTORE_QUERY_LIMITS.habits)
+      )
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, habitsPath);
@@ -814,7 +873,11 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   let noteFolderSnaps;
   try {
     noteFolderSnaps = await getDocs(
-      query(collection(db, 'users', uid, 'noteFolders'), where('ownerUid', '==', uid))
+      query(
+        collection(db, 'users', uid, 'noteFolders'),
+        where('ownerUid', '==', uid),
+        limit(FIRESTORE_QUERY_LIMITS.noteFolders)
+      )
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, noteFoldersPath);
@@ -823,7 +886,11 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   let noteSnaps;
   try {
     noteSnaps = await getDocs(
-      query(collection(db, 'users', uid, 'notes'), where('ownerUid', '==', uid))
+      query(
+        collection(db, 'users', uid, 'notes'),
+        where('ownerUid', '==', uid),
+        limit(FIRESTORE_QUERY_LIMITS.notes)
+      )
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, notesPath);
@@ -887,7 +954,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         notesSeeded: true,
         updatedAt: serverTimestamp(),
       });
-      await seedBatch.commit();
+      await commitGuardedBatch(seedBatch);
       noteFolders = seedFolders;
       notes = seedNotes;
     } catch (err) {
@@ -904,7 +971,11 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   let finAccountSnaps;
   try {
     finAccountSnaps = await getDocs(
-      query(collection(db, 'users', uid, 'financeAccounts'), where('ownerUid', '==', uid))
+      query(
+        collection(db, 'users', uid, 'financeAccounts'),
+        where('ownerUid', '==', uid),
+        limit(FIRESTORE_QUERY_LIMITS.financeAccounts)
+      )
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, finAccountsPath);
@@ -913,7 +984,11 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   let finCategorySnaps;
   try {
     finCategorySnaps = await getDocs(
-      query(collection(db, 'users', uid, 'financeCategories'), where('ownerUid', '==', uid))
+      query(
+        collection(db, 'users', uid, 'financeCategories'),
+        where('ownerUid', '==', uid),
+        limit(FIRESTORE_QUERY_LIMITS.financeCategories)
+      )
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, finCategoriesPath);
@@ -922,7 +997,11 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   let finTransactionSnaps;
   try {
     finTransactionSnaps = await getDocs(
-      query(collection(db, 'users', uid, 'financeTransactions'), where('ownerUid', '==', uid))
+      query(
+        collection(db, 'users', uid, 'financeTransactions'),
+        where('ownerUid', '==', uid),
+        limit(FIRESTORE_QUERY_LIMITS.financeTransactions)
+      )
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, finTransactionsPath);
@@ -931,7 +1010,11 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
   let finGoalSnaps;
   try {
     finGoalSnaps = await getDocs(
-      query(collection(db, 'users', uid, 'financeGoals'), where('ownerUid', '==', uid))
+      query(
+        collection(db, 'users', uid, 'financeGoals'),
+        where('ownerUid', '==', uid),
+        limit(FIRESTORE_QUERY_LIMITS.financeGoals)
+      )
     );
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, finGoalsPath);
@@ -1061,7 +1144,7 @@ export async function loadOrInitializeUserWorkspace(user: User): Promise<{
         financeSeeded: true,
         updatedAt: serverTimestamp(),
       });
-      await seedBatch.commit();
+      await commitGuardedBatch(seedBatch);
       financeAccounts = seedAccounts;
       financeCategories = seedCategories;
       financeTransactions = seedTransactions;

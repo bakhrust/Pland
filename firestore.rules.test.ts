@@ -3,18 +3,25 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clampText, isValidEntityId, safeExternalUrl } from './src/utils/urlSafety';
+import { CostGuardError, createCostGuard, isCostGuardError } from './src/utils/costGuard';
 
 const rulesContent = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
 
-test('firestore.rules includes all Eight Pillars guards', () => {
+test('firestore.rules includes all Eight Pillars and Denial-of-Wallet guards', () => {
   // Pillar 1 & 4: Default deny + verified email + owner allowlist + owner UID gate
   assert.match(rulesContent, /match \/\{document=\*\*\}\s*\{\s*allow read, write: if false;/);
   assert.match(rulesContent, /request\.auth\.token\.email_verified == true/);
   assert.match(rulesContent, /request\.auth\.token\.email == 'bakhrust@gmail\.com'/);
   assert.match(rulesContent, /request\.auth\.uid == userId/);
 
-  // Pillar 2 & 3: Validation helpers + ID regex hardening
+  // Pillar 2 & 3: Validation helpers + ID regex hardening + bounded queries
   assert.match(rulesContent, /function isValidId\(id\)/);
+  assert.match(rulesContent, /function isBoundedQuery\(maxLimit\)/);
+  assert.match(rulesContent, /request\.query\.limit != null/);
+  assert.match(rulesContent, /isBoundedQuery\(50\)/);
+  assert.match(rulesContent, /isBoundedQuery\(500\)/);
+  assert.match(rulesContent, /isBoundedQuery\(2000\)/);
+  assert.match(rulesContent, /data\.financeRates\.keys\(\)\.hasOnly\(/);
   assert.match(rulesContent, /function isValidUserProfile\(/);
   assert.match(rulesContent, /function isValidBoardDoc\(/);
   assert.match(rulesContent, /function isValidCardDoc\(/);
@@ -70,3 +77,35 @@ test('isValidEntityId and clampText enforce Firestore blueprint bounds', () => {
   assert.equal(isValidEntityId('a'.repeat(129)), false);
   assert.equal(clampText('abcde', 3), 'abc');
 });
+
+test('costGuard trips circuit breaker on burst loops and recovers after cooldown', () => {
+  let fakeNow = 100_000;
+  const guard = createCostGuard(
+    {
+      'firestore:read': { rules: [{ windowMs: 10_000, maxRequests: 3 }], cooldownMs: 5_000 },
+      'firestore:write': { rules: [{ windowMs: 10_000, maxRequests: 2 }], cooldownMs: 4_000 },
+      'gcal:api': { rules: [{ windowMs: 10_000, maxRequests: 2 }], cooldownMs: 4_000 },
+    },
+    () => fakeNow
+  );
+
+  // Writes allowed up to maxRequests (2), third trips circuit breaker
+  guard.consume('firestore:write');
+  guard.consume('firestore:write');
+  assert.throws(
+    () => guard.consume('firestore:write'),
+    (err: unknown) => err instanceof CostGuardError && isCostGuardError(err) && err.scope === 'firestore:write'
+  );
+
+  // Reads are isolated and still work
+  guard.consume('firestore:read');
+
+  // Cooldown blocks writes until cooldownMs passes
+  fakeNow += 2_000;
+  assert.throws(() => guard.consume('firestore:write'), CostGuardError);
+
+  // After window + cooldown expire, writes work again
+  fakeNow += 10_000;
+  guard.consume('firestore:write');
+});
+

@@ -1,5 +1,5 @@
 import { CalendarPlus, GripVertical, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { BoardRecord, CardItem, FilterState } from '../types/planner';
 import { filterCards } from '../utils/boardLogic';
 import { formatRussianShortDate, formatTimeHHMM, parseFlexibleDate } from '../utils/dateUtils';
@@ -29,12 +29,66 @@ export function PlannerBacklogSidebar({
   onCloseMobile,
 }: PlannerBacklogSidebarProps) {
   const [tab, setTab] = useState<'unscheduled' | 'all'>('unscheduled');
+  const [selectedListFilter, setSelectedListFilter] = useState<string | 'all'>('all');
+
+  const selectedBoard = useMemo(
+    () =>
+      selectedBoardFilter === 'all'
+        ? null
+        : boards.find((b) => b.id === selectedBoardFilter) ?? null,
+    [boards, selectedBoardFilter]
+  );
+
+  const columnOptions = useMemo(() => {
+    if (selectedBoard) {
+      const counts = new Map<string, number>();
+      for (const card of filterCards(selectedBoard.state.cards, filters)) {
+        counts.set(card.listId, (counts.get(card.listId) ?? 0) + 1);
+      }
+      return [...selectedBoard.state.lists]
+        .sort((a, b) => a.order - b.order)
+        .map((l) => ({
+          value: l.id,
+          label: l.title,
+          count: counts.get(l.id) ?? 0,
+        }));
+    }
+
+    const byTitle = new Map<string, { label: string; count: number }>();
+    for (const board of boards) {
+      const listById = new Map(board.state.lists.map((l) => [l.id, l.title]));
+      for (const l of [...board.state.lists].sort((a, z) => a.order - z.order)) {
+        const key = l.title.trim().toLowerCase();
+        if (!byTitle.has(key)) {
+          byTitle.set(key, { label: l.title, count: 0 });
+        }
+      }
+      for (const card of filterCards(board.state.cards, filters)) {
+        const title = listById.get(card.listId);
+        if (!title) continue;
+        const key = title.trim().toLowerCase();
+        const entry = byTitle.get(key);
+        if (entry) entry.count += 1;
+      }
+    }
+    return Array.from(byTitle.entries()).map(([value, info]) => ({
+      value,
+      label: info.label,
+      count: info.count,
+    }));
+  }, [boards, selectedBoard, filters]);
+
+  useEffect(() => {
+    if (
+      selectedListFilter !== 'all' &&
+      !columnOptions.some((opt) => opt.value === selectedListFilter)
+    ) {
+      setSelectedListFilter('all');
+    }
+  }, [columnOptions, selectedListFilter]);
 
   const scopedEntries = useMemo(() => {
-    const targetBoards =
-      selectedBoardFilter === 'all'
-        ? boards
-        : boards.filter((b) => b.id === selectedBoardFilter);
+    const targetBoards = selectedBoard ? [selectedBoard] : boards;
 
     const rows: Array<{
       card: CardItem;
@@ -46,15 +100,23 @@ export function PlannerBacklogSidebar({
       const listById = new Map(board.state.lists.map((l) => [l.id, l.title]));
       const filtered = filterCards(board.state.cards, filters);
       for (const card of filtered) {
+        const listTitle = listById.get(card.listId) ?? '';
+        if (selectedListFilter !== 'all') {
+          if (selectedBoard) {
+            if (card.listId !== selectedListFilter) continue;
+          } else if (listTitle.trim().toLowerCase() !== selectedListFilter) {
+            continue;
+          }
+        }
         rows.push({
           card,
           board,
-          listTitle: listById.get(card.listId) ?? '',
+          listTitle,
         });
       }
     }
     return rows;
-  }, [boards, selectedBoardFilter, filters]);
+  }, [boards, selectedBoard, selectedListFilter, filters]);
 
   const unscheduled = scopedEntries.filter((entry) => !entry.card.startDate);
   const visibleEntries = tab === 'unscheduled' ? unscheduled : scopedEntries;
@@ -86,28 +148,52 @@ export function PlannerBacklogSidebar({
           </button>
         </div>
 
-        {/* Board Scope Selector */}
-        {boards.length > 1 && (
-          <div>
-            <label htmlFor="backlog-board-filter" className="sr-only">
-              Доска для отображения задач
-            </label>
-            <select
-              id="backlog-board-filter"
-              data-testid="backlog-board-filter"
-              value={selectedBoardFilter}
-              onChange={(e) => onChangeBoardFilter(e.target.value)}
-              className="w-full px-2.5 py-1.5 min-h-[36px] text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-600 cursor-pointer"
-            >
-              <option value="all">Все доски ({boards.length})</option>
-              {boards.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.title}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Board & Column Scope Selectors */}
+        <div className="space-y-1.5">
+          {boards.length > 1 && (
+            <div>
+              <label htmlFor="backlog-board-filter" className="sr-only">
+                Доска для отображения задач
+              </label>
+              <select
+                id="backlog-board-filter"
+                data-testid="backlog-board-filter"
+                value={selectedBoardFilter}
+                onChange={(e) => onChangeBoardFilter(e.target.value)}
+                className="w-full px-2.5 py-1.5 min-h-[34px] text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-600 cursor-pointer"
+              >
+                <option value="all">Все доски ({boards.length})</option>
+                {boards.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {columnOptions.length > 0 && (
+            <div>
+              <label htmlFor="backlog-list-filter" className="sr-only">
+                Колонка доски
+              </label>
+              <select
+                id="backlog-list-filter"
+                data-testid="backlog-list-filter"
+                value={selectedListFilter}
+                onChange={(e) => setSelectedListFilter(e.target.value)}
+                className="w-full px-2.5 py-1.5 min-h-[34px] text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-600 cursor-pointer"
+              >
+                <option value="all">Все колонки</option>
+                {columnOptions.map((col) => (
+                  <option key={col.value} value={col.value}>
+                    {col.label} ({col.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg">
           <button
@@ -136,10 +222,10 @@ export function PlannerBacklogSidebar({
 
         <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
           <span className="hidden md:inline">
-            Перетащите задачу с любой доски на сетку недели, месяца или таймлайна.
+            Перетащите задачу из нужной доски и колонки на сетку недели, месяца или таймлайна.
           </span>
           <span className="md:hidden">
-            Нажмите «На сегодня» или откройте задачу, чтобы задать дату и время.
+            Нажмите «На сегодня» или выберите любой слот на сетке недели.
           </span>
         </p>
       </div>

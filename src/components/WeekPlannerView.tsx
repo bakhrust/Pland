@@ -127,6 +127,7 @@ export function WeekPlannerView({
             <div
               key={slotId}
               data-testid={isMobileSingle ? undefined : `week-slot-${key}-${h}`}
+              onClick={() => onCreateCardAtSlot(key, h)}
               onDragOver={(e) => {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'move';
@@ -149,7 +150,7 @@ export function WeekPlannerView({
                   onScheduleCardAtSlot(cardId, key, h);
                 }
               }}
-              className={`group h-15 border-b border-slate-100 relative transition-colors ${
+              className={`group h-15 border-b border-slate-100 relative transition-colors cursor-pointer ${
                 isHovered ? 'bg-blue-100/80' : 'hover:bg-slate-50/80'
               }`}
             >
@@ -165,8 +166,12 @@ export function WeekPlannerView({
 
               <button
                 type="button"
-                onClick={() => onCreateCardAtSlot(key, h)}
-                aria-label={`Создать задачу ${key} в ${pad2(h)}:00`}
+                data-testid={isMobileSingle ? `mobile-week-slot-add-${key}-${h}` : `week-slot-add-${key}-${h}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCreateCardAtSlot(key, h);
+                }}
+                aria-label={`Добавить задачу ${key} в ${pad2(h)}:00`}
                 className={`focus-visible:opacity-100 absolute right-1.5 top-1.5 p-1 rounded bg-white border border-slate-200 text-slate-500 hover:text-blue-600 transition-opacity cursor-pointer ${
                   isMobileSingle ? 'opacity-75' : 'opacity-0 group-hover:opacity-100'
                 }`}

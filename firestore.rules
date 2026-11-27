@@ -22,6 +22,12 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isBoundedQuery(maxLimit) {
+      return request.query.limit != null
+        && request.query.limit > 0
+        && request.query.limit <= maxLimit;
+    }
+
     function isOptionalBoundedString(val, maxLen) {
       return val == null || (val is string && val.size() <= maxLen);
     }
@@ -87,7 +93,11 @@ service cloud.firestore {
         && (!('notesSeeded' in data) || data.notesSeeded is bool)
         && (!('financeSeeded' in data) || data.financeSeeded is bool)
         && (!('financeCurrency' in data) || isValidFinanceCurrency(data.financeCurrency))
-        && (!('financeRates' in data) || (data.financeRates is map && data.financeRates.size() <= 12))
+        && (!('financeRates' in data) || (
+          data.financeRates is map
+          && data.financeRates.size() <= 12
+          && data.financeRates.keys().hasOnly(['RUB', 'USD', 'EUR', 'KZT', 'BYN', 'GEL', 'TRY', 'AED', 'GBP', 'CNY'])
+        ))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -541,7 +551,10 @@ service cloud.firestore {
 
       match /boards/{boardId} {
         allow get: if isValidId(userId) && isValidId(boardId) && isOwner(userId);
-        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid
+          && isBoundedQuery(50);
 
         allow create: if isValidId(userId)
           && isValidId(boardId)
@@ -569,9 +582,12 @@ service cloud.firestore {
 
         match /cards/{cardId} {
           allow get: if isValidId(userId) && isValidId(boardId) && isValidId(cardId) && isOwner(userId);
-          allow list: if isValidId(userId) && isValidId(boardId) && isOwner(userId)
+          allow list: if isValidId(userId)
+            && isValidId(boardId)
+            && isOwner(userId)
             && existing().ownerUid == request.auth.uid
-            && existing().boardId == boardId;
+            && existing().boardId == boardId
+            && isBoundedQuery(500);
 
           allow create: if isValidId(userId)
             && isValidId(boardId)
@@ -622,7 +638,10 @@ service cloud.firestore {
 
       match /habits/{habitId} {
         allow get: if isValidId(userId) && isValidId(habitId) && isOwner(userId);
-        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid
+          && isBoundedQuery(100);
 
         allow create: if isValidId(userId)
           && isValidId(habitId)
@@ -658,7 +677,10 @@ service cloud.firestore {
 
       match /noteFolders/{folderId} {
         allow get: if isValidId(userId) && isValidId(folderId) && isOwner(userId);
-        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid
+          && isBoundedQuery(200);
 
         allow create: if isValidId(userId)
           && isValidId(folderId)
@@ -685,7 +707,10 @@ service cloud.firestore {
 
       match /notes/{noteId} {
         allow get: if isValidId(userId) && isValidId(noteId) && isOwner(userId);
-        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid
+          && isBoundedQuery(500);
 
         allow create: if isValidId(userId)
           && isValidId(noteId)
@@ -722,7 +747,10 @@ service cloud.firestore {
 
       match /financeAccounts/{accountId} {
         allow get: if isValidId(userId) && isValidId(accountId) && isOwner(userId);
-        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid
+          && isBoundedQuery(50);
 
         allow create: if isValidId(userId)
           && isValidId(accountId)
@@ -748,7 +776,10 @@ service cloud.firestore {
 
       match /financeCategories/{categoryId} {
         allow get: if isValidId(userId) && isValidId(categoryId) && isOwner(userId);
-        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid
+          && isBoundedQuery(100);
 
         allow create: if isValidId(userId)
           && isValidId(categoryId)
@@ -775,7 +806,10 @@ service cloud.firestore {
 
       match /financeTransactions/{transactionId} {
         allow get: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
-        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid
+          && isBoundedQuery(2000);
 
         allow create: if isValidId(userId)
           && isValidId(transactionId)
@@ -813,7 +847,10 @@ service cloud.firestore {
 
       match /financeGoals/{goalId} {
         allow get: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
-        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid
+          && isBoundedQuery(100);
 
         allow create: if isValidId(userId)
           && isValidId(goalId)

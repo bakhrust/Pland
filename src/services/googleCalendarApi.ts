@@ -1,5 +1,6 @@
 import type { CardItem, GoogleCalendarEvent, GoogleCalendarMeta } from '../types/planner';
 import { buildGoogleEventPayload } from '../utils/boardLogic';
+import { consumeCostBudget } from '../utils/costGuard';
 
 const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
 
@@ -11,6 +12,7 @@ export class CalendarAuthExpiredError extends Error {
 }
 
 async function calendarFetch(url: string, accessToken: string, init?: RequestInit) {
+  consumeCostBudget('gcal:api');
   const res = await fetch(url, {
     ...init,
     headers: {

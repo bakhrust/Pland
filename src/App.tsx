@@ -45,6 +45,9 @@ const UpcomingModuleView = lazy(() =>
 const WeekPlannerView = lazy(() =>
   import('./components/WeekPlannerView').then((m) => ({ default: m.WeekPlannerView }))
 );
+const WeekSlotPickerModal = lazy(() =>
+  import('./components/WeekSlotPickerModal').then((m) => ({ default: m.WeekSlotPickerModal }))
+);
 import {
   createInitialFinanceAccounts,
   createInitialFinanceCategories,
@@ -154,6 +157,7 @@ import {
   removeFolderAndPromoteChildren,
 } from './utils/notesLogic';
 import { isTransientFirestoreError } from './utils/firestoreErrors';
+import { isCostGuardError } from './utils/costGuard';
 
 const DEV_PREVIEW_STORAGE_KEY = 'pland_dev_preview_v1';
 const DEV_PREVIEW_HABITS_KEY = 'pland_dev_preview_habits_v1';
@@ -454,6 +458,10 @@ export default function App() {
     card: null,
     defaultListId: board.lists[0]?.id ?? 'list-backlog',
   });
+  const [weekSlotPicker, setWeekSlotPicker] = useState<{
+    dateKey: string;
+    hour: number;
+  } | null>(null);
   const [isGoogleDrawerOpen, setIsGoogleDrawerOpen] = useState(false);
   const [isQuickSearchOpen, setIsQuickSearchOpen] = useState(false);
   const [selectedGoogleEvent, setSelectedGoogleEvent] = useState<GoogleCalendarEvent | null>(null);
@@ -506,6 +514,13 @@ export default function App() {
   }
 
   const handleCloudSyncError = useCallback((err: unknown) => {
+    if (isCostGuardError(err)) {
+      setNotice({
+        kind: 'error',
+        text: err.message,
+      });
+      return;
+    }
     if (isTransientFirestoreError(err)) {
       setNotice({
         kind: 'error',
@@ -2123,19 +2138,7 @@ export default function App() {
                   onScheduleCardAllDay={handleScheduleCardAllDay}
                   onAdjustCardDuration={handleAdjustCardDuration}
                   onCreateCardAtSlot={(dateKey, hour) => {
-                    const preferredBoard =
-                      calendarBoardFilter !== 'all'
-                        ? workspace.boards.find((b) => b.id === calendarBoardFilter) ?? activeBoard
-                        : activeBoard;
-                    setCardModalState({
-                      isOpen: true,
-                      card: null,
-                      boardId: preferredBoard.id,
-                      defaultListId: preferredBoard.state.lists[0]?.id ?? 'list-planned',
-                      defaultStartDate: `${dateKey}T${pad2(hour)}:00`,
-                      defaultEndDate: `${dateKey}T${pad2(hour + 1)}:00`,
-                      defaultAllDay: false,
-                    });
+                    setWeekSlotPicker({ dateKey, hour });
                   }}
                 />
               )}
@@ -2331,6 +2334,37 @@ export default function App() {
             isSubmitting={isMutatingGoogle}
             onConfirm={() => void executePendingGoogleMutation()}
             onCancel={() => setPendingMutation(null)}
+          />
+        )}
+
+        {weekSlotPicker && (
+          <WeekSlotPickerModal
+            isOpen={Boolean(weekSlotPicker)}
+            slot={weekSlotPicker}
+            boards={workspace.boards}
+            initialBoardId={calendarBoardFilter}
+            activeBoardId={activeBoard.id}
+            onClose={() => setWeekSlotPicker(null)}
+            onPickExistingCard={(cardId, dateKey, hour) => {
+              const found = findCardInWorkspace(workspace, cardId);
+              if (found && calendarBoardFilter !== 'all' && found.board.id !== calendarBoardFilter) {
+                setCalendarBoardFilter('all');
+              }
+              handleScheduleCardAtSlot(cardId, dateKey, hour);
+              setWeekSlotPicker(null);
+            }}
+            onCreateNewCard={({ boardId, listId, dateKey, hour }) => {
+              setWeekSlotPicker(null);
+              setCardModalState({
+                isOpen: true,
+                card: null,
+                boardId,
+                defaultListId: listId,
+                defaultStartDate: `${dateKey}T${pad2(hour)}:00`,
+                defaultEndDate: `${dateKey}T${pad2(hour + 1)}:00`,
+                defaultAllDay: false,
+              });
+            }}
           />
         )}
       </Suspense>
